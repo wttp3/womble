@@ -39,6 +39,29 @@ async def main():
             await ws.close()
         print("PASS empty origin and the three hub origins")
 
+    disp2 = D.Display()
+    disp2.weather = {"temp": 21, "code": 1, "max": 22, "min": 14}
+    disp2.weather_ts = __import__("time").time()
+    app2 = web.Application()
+    disp2.add_routes(app2)
+    async with TestClient(TestServer(app2)) as client:
+        page = await client.get("/")
+        html = await page.text()
+        check(page.status == 200 and "WOMBLE" in html and "/static/womble-mark.webp" in html, "dashboard mark")
+        check('rel="icon"' in html and "apple-touch-icon" in html, "icon links")
+        for path in ("/static/womble-mark.webp", "/favicon.png", "/favicon.ico", "/apple-touch-icon.png"):
+            resp = await client.get(path)
+            body = await resp.read()
+            ctype = resp.headers.get("Content-Type", "")
+            check(resp.status == 200 and ctype.startswith("image/"), f"{path} {resp.status} {ctype}")
+            check(200 < len(body) < 80000, f"{path} is {len(body)} bytes")
+        print("PASS logo, favicon and apple-touch icon")
+    task = app2.get("weather_task")
+    if task is not None:
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+
     n = {"n": 0}
     alerts = []
     async def flaky():

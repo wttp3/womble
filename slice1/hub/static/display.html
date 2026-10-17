@@ -1,14 +1,22 @@
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=1280,height=800,initial-scale=1,user-scalable=no">
 <title>Womble #1</title>
-<!-- Womble #1 kitchen display. Spec: DISPLAY.md. Vanilla ES2017 for WebView 106; no external assets. -->
+<link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- Womble #1 kitchen display. Spec: DISPLAY.md. Vanilla ES2017 for WebView 106.
+     The dog mark, favicon and apple-touch icon are the only external files. -->
 <style>
 *{box-sizing:border-box}
-html,body{margin:0;width:1280px;height:800px;overflow:hidden;background:#0d0f12;color:#f2efe8;
- font-family:Roboto,"Noto Sans",Arial,sans-serif;-webkit-user-select:none;user-select:none}
+html{margin:0;width:100%;height:100%;overflow:hidden;background:#0d0f12}
+body{margin:0;position:absolute;left:0;top:0;width:1280px;height:800px;overflow:hidden;transform-origin:0 0;
+ background:#0d0f12;color:#f2efe8;font-family:Roboto,"Noto Sans",Arial,sans-serif;-webkit-user-select:none;user-select:none}
 svg{width:1em;height:1em;vertical-align:-.12em;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
-#bar{position:absolute;left:0;top:0;width:1280px;height:64px;padding:0 32px;display:flex;align-items:center;justify-content:space-between;font-size:26px;color:#9aa3ad;border-bottom:2px solid #1d2229}
-#brand{color:#ffc94d;font-weight:600}.sep{margin:0 14px;color:#5d6873}
+#bar{position:absolute;left:0;top:0;width:1280px;height:64px;padding:0 28px 0 14px;display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:26px;color:#9aa3ad;border-bottom:2px solid #1d2229}
+#brandwrap{display:flex;align-items:center;gap:12px;min-width:0}
+#mark{height:46px;width:auto;display:block;flex:none}
+#lockup{display:flex;align-items:baseline;min-width:0;white-space:nowrap}
+.wordmark{font-weight:700;letter-spacing:.16em;color:#f2efe8;font-size:26px;margin-right:2px}
+#brand{color:#ffc94d;font-weight:600}.sep{margin:0 12px;color:#5d6873}
 #dot{display:inline-block;width:14px;height:14px;border-radius:7px;background:#3ccf6e;margin-right:10px;vertical-align:middle}
 #clk{font-size:34px;color:#f2efe8;font-weight:500}
 #main{position:absolute;left:0;top:64px;width:1280px;height:656px;padding:32px 48px}
@@ -55,7 +63,7 @@ h1{font-size:64px;line-height:1.1;margin:0 0 24px;font-weight:600;max-width:1060
 .cnt{position:absolute;left:48px;bottom:36px;right:48px;display:flex;justify-content:space-between;font-size:28px;color:#9aa3ad}
 .pb{height:10px;background:#2a313a;border-radius:5px;margin-top:40px}.pb i{display:block;height:10px;background:#ffc94d;border-radius:5px}
 </style></head><body>
-<div id="bar"><div><b id="brand">Womble #1</b><span class="sep">·</span><span id="dot"></span><span id="lbl">Connecting…</span></div><div id="clk"></div></div>
+<div id="bar"><div id="brandwrap"><img id="mark" src="/static/womble-mark.webp?v=1" alt="" width="64" height="46"><div id="lockup"><span class="wordmark">WOMBLE</span><span class="sep">·</span><span id="dot"></span><span id="lbl">Connecting…</span></div></div><div id="clk"></div></div>
 <div id="main"></div>
 <button id="x" class="btn" data-a="dismiss"></button>
 <div id="np"></div><div id="toast"></div><div id="dim"></div>
@@ -114,7 +122,7 @@ function offer(s,d,ttl){ // priority: lower-ranked event during a higher state -
 function render(){
  var s=cur.s,d=cur.d,h='';
  document.body.className=(s==='recipe'||s==='step'||s==='playing')?'full':'';
- $('brand').textContent=M.name;document.title=M.name;
+ document.title=M.name;
  var st={listening:['#ffc94d','Listening'],thinking:['#5d8bd6','Working…'],error:['#ff6b5b','Problem']}[s]||(online?['#3ccf6e','Ready']:['#ff6b5b','Offline · reconnecting']);
  $('dot').style.background=st[0];$('lbl').textContent=st[1];
  $('x').className=(s==='idle'||s==='listening')?'btn':'btn on';var RC=M.record||{};function rc(k){var c=RC[k]||{pos:0,neg:0};return c.pos+' womble · '+c.neg+' other'}
@@ -216,5 +224,15 @@ function conn(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')
  ws.onopen=function(){online=true;send({event:'hello',client:'kitchen-frame',ver:1});render()};
  ws.onmessage=function(e){try{handle(JSON.parse(e.data))}catch(x){console.log('bad msg',x)}};
  ws.onclose=function(){if(online){online=false;render()}setTimeout(conn,2000+Math.random()*1000)};}
-tick();render();if(location.host)conn();
+function fit(){
+  var w=window.innerWidth||1280,h=window.innerHeight||800,s=Math.min(w/1280,h/800);
+  if(!isFinite(s)||s<=0)s=1;
+  var b=document.body;
+  if(Math.abs(s-1)<0.02){b.style.transform='';b.style.left='0px';b.style.top='0px';return}
+  b.style.transform='scale('+s.toFixed(4)+')';
+  b.style.left=Math.max(0,Math.round((w-1280*s)/2))+'px';
+  b.style.top=Math.max(0,Math.round((h-800*s)/2))+'px';
+}
+window.addEventListener('resize',fit);
+tick();render();fit();if(location.host)conn();
 </script></body></html>

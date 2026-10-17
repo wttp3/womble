@@ -108,6 +108,7 @@ flowchart LR
 * **BOX-3 link:** `APIClient(BOX3_HOST, 6053, noise_psk)` in an explicit reconnect loop (retries every 5 s). It mirrors device log lines that match WAKE/micro_wake/voice_assistant/\[W\]/\[E\] into hub.log under the `box3` logger.
 * **HTTP (port 8080, 0.0.0.0):**
   * `GET /`: display.html
+  * `GET /static/womble-mark.webp`, `/favicon.png`, `/favicon.ico`, `/apple-touch-icon.png`: the dog mark. Small WebP/PNG copies of `docs/womble-dog.png`. The 1.2 MB original is not served.
   * `WS /ws`
   * `POST /api/event`
   * `GET /api/taps`
@@ -178,6 +179,7 @@ flowchart LR
 
   hub.log shows only "Okay Nabu" detections so far. How well the Womble model works is **\[unverified\]**.
 * **Other entities:** speaker `media_player` (`box_media`), `voice_assistant` (id `va`), a template text sensor "Voice status", buttons "Talk" (stop mww + start VA) and "Restart", the LCD ili9xxx S3BOX status display, and sntp.
+* **LCD idle:** a white dog mark (109×78 grayscale, 8502 bytes of flash, from `docs/womble-dog.png`) above an amber WOMBLE wordmark, the clock and the hub line. Listening, thinking, speaking and error stay the coloured ring and label. Wi-Fi, API encryption, OTA, wake words and the partition layout are unchanged.
 * **Secrets:** `secrets.yaml` holds wifi_ssid, wifi_password, api_key and ota_password. It is gitignored. Its template is `secrets.example.yaml`.
 * **Logs** from earlier runs are in `slice1/`: compile-*.log, flash*.log, flash-usb\*.log. `flash-usb.log` reports chip ESP32-S3 (QFN56) rev v0.2.
 * **No esptool** `read_flash` **backup image was found** under `~/box3-voice` (or `~` to depth 3). Make one before the next flash.

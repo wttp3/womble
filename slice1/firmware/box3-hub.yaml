@@ -3,7 +3,8 @@
 # Based on the structure of the official ESPHome voice firmware:
 #   https://github.com/esphome/wake-word-voice-assistants/blob/main/esp32-s3-box-3/esp32-s3-box-3.yaml
 # Before flashing, DIFF the pin/codec blocks against that file for ESPHome 2026.9.x. This is a trimmed
-# version without the LVGL display pages; the LCD is only backlight + status text for now.
+# version without the LVGL display pages. Idle shows the dog mark, WOMBLE and the
+# clock; listening / thinking / speaking keep the status ring.
 # Secrets live in secrets.yaml (not committed): api_key, wifi_ssid, wifi_password, ota_password.
 
 substitutions:
@@ -271,6 +272,15 @@ font:
     id: font_big
     size: 56
 
+# Idle mark. Cropped from docs/womble-dog.png and inverted to white ink on black.
+# Grayscale is one byte per pixel (109×78 = 8502 bytes of flash). Drawn on idle only.
+image:
+  - platform: file
+    file: images/womble-idle.png
+    id: womble_logo
+    type: GRAYSCALE
+    resize: 109x78
+
 color:
   - id: c_amber
     hex: FFC94D
@@ -299,12 +309,13 @@ display:
       it.fill(Color::BLACK);
       int s = id(ui_state);
       if (s == 0) {
-        it.print(160, 30, id(font_mid), id(c_amber), TextAlign::CENTER, "Womble #1");
+        it.image(160, 46, id(womble_logo), ImageAlign::CENTER);
+        it.print(160, 106, id(font_mid), id(c_amber), TextAlign::CENTER, "WOMBLE");
         auto t = id(sntp_time).now();
-        if (t.is_valid()) it.strftime(160, 115, id(font_big), Color::WHITE, TextAlign::CENTER, "%H:%M", t);
-        else it.print(160, 115, id(font_mid), id(c_grey), TextAlign::CENTER, "--:--");
+        if (t.is_valid()) it.strftime(160, 160, id(font_big), Color::WHITE, TextAlign::CENTER, "%H:%M", t);
+        else it.print(160, 160, id(font_mid), id(c_grey), TextAlign::CENTER, "--:--");
         bool hub = global_api_server != nullptr && global_api_server->is_connected();
-        it.print(160, 205, id(font_small), hub ? id(c_green) : id(c_red), TextAlign::CENTER,
+        it.print(160, 216, id(font_small), hub ? id(c_green) : id(c_red), TextAlign::CENTER,
                  hub ? "Hub connected - say \"Womble\"" : "Hub offline");
       } else {
         Color c = s == 1 ? id(c_amber) : s == 2 ? id(c_blue) : s == 3 ? id(c_green) : id(c_red);
