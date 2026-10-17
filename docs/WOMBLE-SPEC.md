@@ -1,4 +1,4 @@
-<linear-image>{"type":"image","attrs":{"src":"https://uploads.linear.app/a988aa4b-5300-472b-b0f5-1fcb6c9e1cc2/f5020c33-800e-4328-afba-76f88e9e059c/ec6e68c0-c675-4e86-99d9-108606e405c4?signature=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwYXRoIjoiL2E5ODhhYTRiLTUzMDAtNDcyYi1iMGY1LTFmY2I2YzllMWNjMi9mNTAyMGMzMy04MDBlLTQzMjgtYWZiYS03NmY4OGU5ZTA1OWMvZWM2ZTY4YzAtYzY3NS00ZTg2LTk5ZDktMTA4NjA2ZTQwNWM0IiwiaWF0IjoxNzkyMjU3MzM1LCJleHAiOjE3OTIyNTc2MzV9.4L_cFNPnBfTkja-vvrPy8OhYIlG7WJckBC_RbfF0lx4","alt":"Womble"}}</linear-image>
+<p align="center"><img src="womble-dog.png" alt="Womble" width="280"></p>
 
 *Written 2026-10-17 from the real files on petit (*`/Users/decoy/box3-voice`*). I read the code but changed nothing. **\[unverified\]** marks anything I could not confirm from files or logs. Secrets are named here, never quoted.*
 
