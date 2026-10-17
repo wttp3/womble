@@ -11,6 +11,52 @@ from aiohttp import web, ClientSession, ClientTimeout
 
 log = logging.getLogger("display")
 STATIC = Path(__file__).resolve().parent / "static"
+
+
+def http_hosts(hub_ip: str) -> list[str]:
+    """LAN address, plus loopback so localhost /api/event still reaches the hub."""
+    hosts = [hub_ip]
+    if hub_ip not in ("127.0.0.1", "::1", "localhost"):
+        hosts.append("127.0.0.1")
+    return hosts
+
+
+def allowed_ws_origins(hub_ip: str, port: int) -> set[str]:
+    """Empty Origin (non-browser clients) or the page served on the hub / loopback."""
+    return {
+        "",
+        f"http://{hub_ip}:{port}",
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    }
+
+
+async def supervise(name, coro_factory, on_give_up=None, fails_before_alert=3, first_delay=2.0):
+    """Restart a long-lived task with backoff if it raises. A clean return is left stopped."""
+    delay = first_delay
+    fails = 0
+    while True:
+        started = time.monotonic()
+        try:
+            await coro_factory()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if time.monotonic() - started > 30:
+                delay, fails = first_delay, 0
+            fails += 1
+            log.warning("%s failed (%s: %s); restarting in %.0f s", name, type(e).__name__, e, delay)
+            if on_give_up and fails >= fails_before_alert:
+                try:
+                    await on_give_up(name, e)
+                except Exception as ee:
+                    log.warning("%s alert failed (%s)", name, type(ee).__name__)
+                fails = 0
+            await asyncio.sleep(delay)
+            delay = min(60.0, delay * 2)
+        else:
+            log.warning("%s stopped", name)
+            return
 WEATHER_TTL = 15 * 60
 SHORT_WORDS = 60
 FOREGROUND = {"reply", "list.updated", "research.added", "recipe", "recipe.step", "error"}
@@ -35,6 +81,8 @@ class Display:
         self.taps: list[dict] = []
         self.tap_hooks: list = []          # async fn(action) called for every tap (recorder)
         self.snapshot_extra: dict = {}     # key -> fn() merged into snapshot data
+        self.allowed_origins = None        # None = no Origin check (standalone). set of strings otherwise
+        self.boot_note = None              # toast sent to each socket that connects while set
 
     # ---------- outbound ----------
     async def emit(self, event: str, data: dict | None = None, corr=None, ttl_s=None, priority="normal"):
@@ -119,8 +167,16 @@ class Display:
 
     # ---------- http ----------
     async def ws_handler(self, request):
+        origin = request.headers.get("Origin", "")
+        if self.allowed_origins is not None and origin not in self.allowed_origins:
+            log.info("ws rejected origin %r", origin)
+            raise web.HTTPForbidden()
         ws = web.WebSocketResponse(heartbeat=20); await ws.prepare(request); self.clients.add(ws)
         await ws.send_str(json.dumps(await self.snapshot()))
+        if self.boot_note:
+            note = {"v": 1, "event": "toast", "id": uuid.uuid4().hex, "corr": None, "ts": time.time(),
+                    "ttl_s": None, "priority": "normal", "data": {"text": self.boot_note, "kind": "info"}}
+            await ws.send_str(json.dumps(note))
         async for m in ws:
             try:
                 j = json.loads(m.data)
@@ -147,7 +203,11 @@ class Display:
         app.router.add_get("/ws", self.ws_handler)
         app.router.add_post("/api/event", self.api_event)
         app.router.add_get("/api/taps", self.api_taps)
-        async def start_bg(app): app["weather_task"] = asyncio.create_task(self.weather_loop())
+        async def start_bg(app):
+            async def _alert(name, exc):
+                await self.emit("error", {"message": "Weather updates stopped", "code": "weather",
+                                          "detail": type(exc).__name__})
+            app["weather_task"] = asyncio.create_task(supervise("weather", self.weather_loop, on_give_up=_alert))
         app.on_startup.append(start_bg)
 
 if __name__ == "__main__":   # standalone test server, no BOX-3 / ML needed

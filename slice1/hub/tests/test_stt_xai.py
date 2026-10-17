@@ -20,4 +20,40 @@ assert ("language", "en") in kw["data"] and ("keyterm", "Womble") in kw["data"] 
 w = wave.open(io.BytesIO(kw["files"]["file"][1])); assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2)
 try: stt_xai.transcribe_xai(pcm, "k", session=Sess(Resp(401, {}))); raise SystemExit("expected error")
 except RuntimeError as e: assert str(e) == "http 401"
+
+# C10: a missing key is not latched forever, and the value is never logged.
+import logging
+FAKE = "xai-test-key-value"
+class Grab(logging.Handler):
+    def __init__(self):
+        super().__init__(); self.lines = []
+    def emit(self, record): self.lines.append(record.getMessage())
+grab = Grab(); logging.getLogger("hub").addHandler(grab)
+stt_xai._key = None; stt_xai._checked_at = None
+calls = {"n": 0}
+def miss(cmd, **kw):
+    calls["n"] += 1
+    class R: returncode = 1; stdout = ""
+    return R()
+real_run = stt_xai.subprocess.run
+try:
+    stt_xai.subprocess.run = miss
+    assert stt_xai.get_key() is None and calls["n"] == 1
+    assert stt_xai.get_key() is None and calls["n"] == 1   # inside the 5 min window
+    stt_xai._checked_at -= stt_xai.KEY_RETRY_S + 1
+    assert stt_xai.get_key() is None and calls["n"] == 2
+    def hit(cmd, **kw):
+        calls["n"] += 1
+        class R: returncode = 0; stdout = FAKE + "\n"
+        return R()
+    stt_xai.subprocess.run = hit
+    stt_xai._checked_at -= stt_xai.KEY_RETRY_S + 1
+    assert stt_xai.get_key() == FAKE and calls["n"] == 3
+    assert stt_xai.get_key() == FAKE and calls["n"] == 3   # cached, no further read
+    assert not any(FAKE in line for line in grab.lines), grab.lines
+finally:
+    stt_xai.subprocess.run = real_run
+    stt_xai._key = None; stt_xai._checked_at = None
+    logging.getLogger("hub").removeHandler(grab)
+print("PASS key recheck (no value logged)")
 print("test_stt_xai OK")

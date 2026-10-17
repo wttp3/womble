@@ -1,6 +1,7 @@
 """xAI grok-voice-transcribe-2.0 batch STT (REST POST /v1/stt).
-Key comes from macOS Keychain (service womble-xai, account decoy) at runtime; never logged."""
-import io, logging, os, subprocess, wave
+Key comes from macOS Keychain (service womble-xai, account decoy) at runtime; never logged.
+A missing or unreadable key is re-read every 5 minutes instead of staying off until restart."""
+import io, logging, os, subprocess, time, wave
 import requests
 
 log = logging.getLogger("hub")
@@ -8,19 +9,30 @@ URL = "https://api.x.ai/v1/stt"
 KC_SERVICE, KC_ACCOUNT = "womble-xai", "decoy"
 KEYTERMS = ["milk", "bread", "biscuits", "eggs", "Womble", "Vic", "Andrew", "shopping", "list", "Frida"]
 TIMEOUT = float(os.environ.get("XAI_STT_TIMEOUT", "5"))
-_key = None; _checked = False
+KEY_RETRY_S = 5 * 60
+_key = None
+_checked_at = None   # time.time() of the last failed read; None = never tried
 
 def get_key():
-    global _key, _checked
-    if not _checked:
-        _checked = True
-        try:
-            r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT, "-w"],
-                               capture_output=True, text=True, timeout=5)
-            _key = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
-        except Exception:
-            _key = None
-        if not _key: log.warning("xai stt disabled (no Keychain item womble-xai)")
+    """Return the key, or None. Cached once found. While missing, re-check every KEY_RETRY_S.
+    The value is never logged."""
+    global _key, _checked_at
+    if _key:
+        return _key
+    now = time.time()
+    if _checked_at is not None and now - _checked_at < KEY_RETRY_S:
+        return None
+    _checked_at = now
+    try:
+        r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT, "-w"],
+                           capture_output=True, text=True, timeout=5)
+        _key = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        _key = None
+    if _key:
+        log.info("xai stt enabled")
+    else:
+        log.warning("xai stt disabled (no Keychain item womble-xai); will recheck in 5 min")
     return _key
 
 def pcm_to_wav(pcm: bytes, rate=16000) -> bytes:

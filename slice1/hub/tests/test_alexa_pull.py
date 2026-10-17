@@ -45,6 +45,27 @@ async def main():
     assert ap.poll_interval(0, now=time.mktime((2026,10,15,12,0,0,0,0,-1))) == ap.IDLE_S
     assert ap.poll_interval(0, now=time.mktime((2026,10,15,3,0,0,0,0,-1))) == ap.NIGHT_S
     print("PASS poll interval active/idle/night")
+    # C10: missing / unreadable token is retried, and the value is not logged
+    def boom(*a, **k): raise OSError("locked")
+    real_run = ap.subprocess.run
+    ap.subprocess.run = boom
+    try: assert ap._read_token() is None
+    finally: ap.subprocess.run = real_run
+    calls = {"n": 0}
+    real_read = ap._read_token
+    def fake_read():
+        calls["n"] += 1
+        if calls["n"] < 3: return None
+        return "queue-token"
+    ap._read_token = fake_read
+    old_wait = ap.TOKEN_RETRY_S; ap.TOKEN_RETRY_S = 0
+    try:
+        p3 = ap.AlexaPuller(d, route, d.push_card, devices=ap.Devices(tmp / "d3.json"), seen=ap.Seen(tmp / "s3.json"))
+        got = await asyncio.wait_for(p3.wait_for_token(), 2)
+        assert got == "queue-token" and calls["n"] == 3, calls
+    finally:
+        ap._read_token = real_read; ap.TOKEN_RETRY_S = old_wait
+    print("PASS missing token rechecked (value not required to start)")
     import os; os.environ["ALEXA_PULL"] = "0"; assert p.start() is None and p.task is None
     print("PASS ALEXA_PULL=0 -> not started")
     print("ALL PASSED")

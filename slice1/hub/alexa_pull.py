@@ -1,11 +1,11 @@
 """Womble #1 — Alexa jobs from the Cloudflare Queue (see ../../ALEXA.md §8).
 
 Outbound only: short-polls the HTTP pull consumer of queue `womble-alexa`, runs each job through the hub's
-route(), shows it on the frame with a room chip, and acks. Disabled (does nothing, no network) unless the
-Keychain item  service=womble-cf-queue account=decoy  exists, or if ALEXA_PULL=0.
+route(), shows it on the frame with a room chip, and acks. Does nothing if ALEXA_PULL=0. A missing or
+unreadable Keychain item (service=womble-cf-queue account=decoy) is re-read every 5 minutes.
 
-hub.py wiring:   from alexa_pull import AlexaPuller
-                 ALEXA = AlexaPuller(disp, route, push_card); ALEXA.start()   # inside main(), after the web site starts
+hub.py wiring:   AlexaPuller(disp, route, push_card) supervised from main(), before model warm-up.
+                 start() is the same loop without the supervisor (ALEXA_PULL=0 returns None).
 Standalone check:  .venv/bin/python alexa_pull.py --status | --once
 """
 import asyncio, base64, collections, json, logging, os, random, subprocess, time
@@ -26,6 +26,7 @@ MAX_ATTEMPTS = 3
 ACTIVE_S, IDLE_S = float(os.environ.get("ALEXA_POLL_S", "2")), float(os.environ.get("ALEXA_IDLE_POLL_S", "5"))
 NIGHT_S = float(os.environ.get("ALEXA_NIGHT_POLL_S", "15"))
 IDLE_AFTER_S = 10 * 60
+TOKEN_RETRY_S = 5 * 60
 
 def keychain_item_exists() -> bool:
     """True if the Keychain item exists. Does NOT read the secret (no -w)."""
@@ -34,9 +35,15 @@ def keychain_item_exists() -> bool:
     return r.returncode == 0
 
 def _read_token() -> str | None:
-    r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT, "-w"],
-                       capture_output=True, text=True)
-    return r.stdout.strip() or None if r.returncode == 0 else None
+    """Queue token, or None if the item is missing or unreadable. The value is never logged."""
+    try:
+        r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT, "-w"],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip() or None
 
 def decode_body(body) -> dict:
     """json content type: docs say base64, the API currently returns a JSON string; accept both."""
@@ -90,9 +97,19 @@ class AlexaPuller:
         return os.environ.get("ALEXA_PULL", "1") != "0" and keychain_item_exists()
 
     def start(self):
-        if not self.enabled():
-            log.info("alexa pull disabled (no Keychain item %s or ALEXA_PULL=0)", KC_SERVICE); return None
+        if os.environ.get("ALEXA_PULL", "1") == "0":
+            log.info("alexa pull disabled (ALEXA_PULL=0)"); return None
         self.task = asyncio.create_task(self.run()); return self.task
+
+    async def wait_for_token(self) -> str:
+        """Block until the Keychain token can be read. Recheck every TOKEN_RETRY_S while it is missing."""
+        while True:
+            token = await asyncio.to_thread(_read_token)
+            if token:
+                return token
+            self.state = "disabled"
+            log.info("alexa pull disabled (no Keychain item %s); rechecking in 5 min", KC_SERVICE)
+            await asyncio.sleep(TOKEN_RETRY_S)
 
     async def _post(self, s, token, path, payload):
         async with s.post(f"{API}/{path}", json=payload, headers={"Authorization": f"Bearer {token}"}) as r:
@@ -100,8 +117,7 @@ class AlexaPuller:
             return r.status, body
 
     async def run(self):
-        token = await asyncio.to_thread(_read_token)
-        if not token: self.state = "disabled"; return
+        token = await self.wait_for_token()
         self.state = "running"; backoff = 0.0
         log.info("alexa pull running (queue %s)", QUEUE_ID)
         async with ClientSession(timeout=ClientTimeout(total=15)) as s:

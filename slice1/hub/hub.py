@@ -8,14 +8,16 @@ the BOX-3 can reach), HUB_PORT (8080), WHISPER_MODEL, TTS_ENGINE (kokoro|say).
 NOTE: the aioesphomeapi voice-assistant API names below match how Home Assistant's esphome
 integration uses them; check them against the installed aioesphomeapi version (see README).
 """
-import asyncio, json, logging, os, re, subprocess, tempfile, time, uuid, wave
+import asyncio, json, logging, os, subprocess, tempfile, time, uuid, wave
 from pathlib import Path
 
 import numpy as np
 from aiohttp import web
 from aioesphomeapi import APIClient, VoiceAssistantEventType as EV
 from recorder import Recorder, make_beep
-from display import Display   # Womble #1 display: events, weather, taps (see DISPLAY.md)
+from display import Display, allowed_ws_origins, http_hosts, supervise   # Womble #1 display: events, weather, taps (see DISPLAY.md)
+from lists import ListStore
+from router import route as route_text
 
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"; DATA.mkdir(exist_ok=True)
@@ -66,54 +68,14 @@ def warmup():
         transcribe_whisper((rng.normal(0, 800, 16000 * secs)).astype(np.int16).tobytes())
     tts("Ready.")   # loads Kokoro + misaki/spaCy once (first call ~30 s cold)
 
-# ---------- router ----------
-ADD_RE = re.compile(r"^(?:please\s+)?(?:add|put)\s+(?P<item>.+?)(?:\s+(?:to|on)\s+(?:the\s+|my\s+)?(?P<list>[\w ]+?)(?:\s+list)?)?[.!]?$", re.I)
-RECORD_RE = re.compile(r"\brecord\b.*?\bfor\s+(?P<who>andrew|vic\w*|victoria)\b", re.I)
-SHOW_RE = re.compile(r"^(?:what'?s|show|read)\s+(?:on\s+)?(?:the\s+|my\s+)?(?P<list>[\w ]+?)\s+list", re.I)
+# ---------- router (router.py / lists.py; importable without MLX) ----------
+LISTS = ListStore(LIST_FILE)
 
 def load_lists():
-    if not LIST_FILE.exists(): return {}
-    try:
-        raw = LIST_FILE.read_text()
-        if not raw.strip(): raise json.JSONDecodeError("empty file", raw, 0)
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        bad = LIST_FILE.with_name(f"lists.corrupt-{int(time.time())}.json")
-        try: os.replace(LIST_FILE, bad)
-        except OSError: pass
-        log.warning("lists.json unreadable (%s); moved to %s, starting empty", e.msg, bad.name)
-        return {}
-
-def save_lists(lists: dict):
-    tmp = LIST_FILE.with_name(LIST_FILE.name + ".tmp")
-    with open(tmp, "w") as f:
-        f.write(json.dumps(lists, indent=2)); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp, LIST_FILE)
+    return LISTS.load()
 
 def route(text: str) -> dict:
-    t = text.strip()
-    if m := RECORD_RE.search(t):
-        who = "vic" if m["who"].lower().startswith("vic") else "andrew"
-        if re.search(r"\b(other words|not womble|negatives?)\b", t, re.I):
-            return {"category": "record.start", "speaker": who, "only": "neg", "speech": f"Recording other words for {who.title()}. Read each one from the screen after the beep.",
-                    "card": {"type": "text", "title": f"Record other words · {who.title()}", "body": "Starting…"}}
-        return {"category": "record.start", "speaker": who, "speech": f"Recording Womble for {who.title()}. Say it after each beep.",
-                "card": {"type": "text", "title": f"Record Womble · {who.title()}", "body": "Starting…"}}
-    if re.fullmatch(r"(?:please\s+)?stop(?: recording)?[.!]?", t, re.I) and REC.active:
-        return {"category": "record.stop", "speech": "Stopped recording.", "card": {"type": "text", "title": "Recording stopped", "body": ""}}
-    if m := ADD_RE.match(t):
-        item, lst = m["item"].strip(), (m["list"] or "shopping").strip().lower()
-        lists = load_lists(); lists.setdefault(lst, []).append({"item": item, "ts": time.time()})
-        save_lists(lists)
-        return {"category": "list.add", "speech": f"Added {item} to {lst}.",
-                "card": {"type": "list", "title": lst.title(), "items": [i["item"] for i in lists[lst]], "highlight": item}}
-    if m := SHOW_RE.match(t):
-        lst = m["list"].strip().lower(); items = [i["item"] for i in load_lists().get(lst, [])]
-        return {"category": "list.show", "speech": f"{len(items)} items on {lst}.",
-                "card": {"type": "list", "title": lst.title(), "items": items}}
-    # slice 1: everything else is just echoed; phase 2 dispatches to Grok bots
-    return {"category": "fallback", "speech": "Sorry, I can only do lists for now.",
-            "card": {"type": "text", "title": "Heard", "body": t}}
+    return route_text(text, LISTS, REC.active)
 
 # ---------- TTS ----------
 _kokoro = None
@@ -156,6 +118,7 @@ def _resample(audio, sr, target):
 
 # ---------- display ----------
 disp = Display(lists_loader=load_lists)
+disp.allowed_origins = allowed_ws_origins(HUB_IP, HUB_PORT)
 SAMPLES = DATA / "womble-samples"; SAMPLES.mkdir(exist_ok=True)
 REC = Recorder(SAMPLES, disp, tts=lambda t: tts(t), transcribe=lambda pcm: transcribe(pcm),
                url_for=lambda p: f"http://{HUB_IP}:{HUB_PORT}/tts/{p.name}", beep=make_beep(TTS_DIR / "rec-beep.wav"))
@@ -164,6 +127,9 @@ async def push_card(card: dict):       # kept for slice-1 callers; translated to
     await disp.push_card(card)
 
 # ---------- voice session ----------
+SORRY = "Sorry, something went wrong."
+models_ready = None   # asyncio.Event once main() starts; None skips the wait (tests call warmup themselves)
+
 class Session:
     def __init__(self, client: APIClient):
         self.c = client; self.buf = bytearray(); self.t = {}; self.active = False
@@ -226,62 +192,128 @@ class Session:
     async def on_stop(self, abort: bool = False):
         # handle_stop(True) on device stop/abort command, handle_stop(False) on audio end
         if getattr(self, "rec", False): await REC.on_stop(abort); return
-        if self.active and not abort: self.end_reason = "device_stop"; await self.finish()
+        if abort:
+            was = self.active
+            self.active = False
+            if was:
+                try: await disp.emit("voice.cancel", {"reason": "abort"})
+                except Exception as e: log.warning("voice.cancel failed (%s)", type(e).__name__)
+            return
+        if self.active: self.end_reason = "device_stop"; await self.finish()
         self.active = False
 
     async def finish(self):
         if not self.active: return
         self.active = False; t = self.t; t["eos"] = time.perf_counter()
         c = self.c
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_VAD_END, None)
-        text = await asyncio.to_thread(transcribe, bytes(self.buf)); t["stt"] = time.perf_counter()
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_END, {"text": text})
-        if not text:
-            await disp.emit("voice.cancel", {"reason": getattr(self, "end_reason", "no_speech")})
-        else:
-            await disp.emit("voice.heard", {"text": text})
-        try: REC.save_passive(bytes(self.buf), t.get("wake_word"), text)   # passive wake-word capture (post-wake audio only)
-        except Exception as e: log.warning("passive save failed: %s", e)
-        res = route(text); t["route"] = time.perf_counter()
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_START, None)
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_END, {"conversation_id": ""})
-        await push_card(res["card"]); t["display"] = time.perf_counter()
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_START, {"text": res["speech"]})
-        wav = await asyncio.to_thread(tts, res["speech"]); t["tts"] = time.perf_counter()
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_END, {"url": f"http://{HUB_IP}:{HUB_PORT}/tts/{wav.name}"})
-        c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)
-        if res["category"] == "record.start":
-            with wave.open(str(wav)) as wf: dur = wf.getnframes() / wf.getframerate()
-            await REC.start(res["speaker"], delay_s=dur + 1.5, only=res.get("only"))
-        elif res["category"] == "record.stop":
-            await REC.stop("voice")
-        w = t["wake"]
-        r = self.rms_log
-        rec = {"ts": time.time(), "text": text, "end_reason": getattr(self, "end_reason", "?"),
-               "speech_start_s": self.speech_start, "speech_end_s": self.last_voice, "peak": round(self.peak), "noise_floor": round(Session.noise_floor),
-               "rms_max": max(r) if r else 0, "rms_median": int(np.median(r)) if r else 0,
-               "chunk_bytes": sorted(self.chunk_sizes), "tts_file_bytes": wav.stat().st_size, "category": res["category"], "audio_s": round(len(self.buf) / 32000, 2),
-               **{f"{k}_ms": round((t[k] - w) * 1000) for k in ("eos", "stt", "route", "display", "tts")},
-               "stt_only_ms": round((t["stt"] - t["eos"]) * 1000), "tts_only_ms": round((t["tts"] - t["display"]) * 1000)}
-        with TIMING_LOG.open("a") as f: f.write(json.dumps(rec) + "\n")
-        _write_wav16(DATA / "last_utterance.wav", bytes(self.buf))
-        log.info("timing %s", rec)
+        text, wav, err = "", None, None
+        res = {"category": "error", "speech": SORRY}
+        pipeline_done = tts_sent = False
+        try:
+            if models_ready is not None and not models_ready.is_set():
+                await models_ready.wait()
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_VAD_END, None)
+            text = await asyncio.to_thread(transcribe, bytes(self.buf)); t["stt"] = time.perf_counter()
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_END, {"text": text})
+            if not text:
+                await disp.emit("voice.cancel", {"reason": getattr(self, "end_reason", "no_speech")})
+            else:
+                await disp.emit("voice.heard", {"text": text})
+            try: REC.save_passive(bytes(self.buf), t.get("wake_word"), text)   # passive wake-word capture (post-wake audio only)
+            except Exception as e: log.warning("passive save failed: %s", e)
+            res = route(text); t["route"] = time.perf_counter()
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_START, None)
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_END, {"conversation_id": ""})
+            await push_card(res["card"]); t["display"] = time.perf_counter()
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_START, {"text": res["speech"]})
+            wav = await asyncio.to_thread(tts, res["speech"]); t["tts"] = time.perf_counter()
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_END, {"url": f"http://{HUB_IP}:{HUB_PORT}/tts/{wav.name}"})
+            tts_sent = True
+            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)
+            pipeline_done = True
+            if res["category"] == "record.start":
+                with wave.open(str(wav)) as wf: dur = wf.getnframes() / wf.getframerate()
+                await REC.start(res["speaker"], delay_s=dur + 1.5, only=res.get("only"))
+            elif res["category"] == "record.stop":
+                await REC.stop("voice")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            err = e
+            log.warning("finish failed (%s)", type(e).__name__, exc_info=True)
+            try: await disp.emit("error", {"message": SORRY, "code": "finish", "detail": type(e).__name__})
+            except Exception as ee: log.warning("error event failed (%s)", type(ee).__name__)
+            if not tts_sent:
+                try:
+                    wav = await asyncio.to_thread(tts, SORRY); t["tts"] = time.perf_counter()
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_START, {"text": SORRY})
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_END, {"url": f"http://{HUB_IP}:{HUB_PORT}/tts/{wav.name}"})
+                except Exception as ee:
+                    log.warning("sorry line failed (%s)", type(ee).__name__); wav = None
+            if not pipeline_done:
+                for ev, data in ((EV.VOICE_ASSISTANT_ERROR, {"code": "error", "message": SORRY}),
+                                 (EV.VOICE_ASSISTANT_RUN_END, None)):
+                    try: c.send_voice_assistant_event(ev, data)
+                    except Exception as ee: log.warning("voice event failed (%s)", type(ee).__name__)
+        try:
+            w = t["wake"]; r = self.rms_log
+            rec = {"ts": time.time(), "text": text, "end_reason": getattr(self, "end_reason", "?"),
+                   "speech_start_s": self.speech_start, "speech_end_s": self.last_voice, "peak": round(self.peak), "noise_floor": round(Session.noise_floor),
+                   "rms_max": max(r) if r else 0, "rms_median": int(np.median(r)) if r else 0,
+                   "chunk_bytes": sorted(self.chunk_sizes), "tts_file_bytes": wav.stat().st_size if wav is not None else 0,
+                   "category": res["category"], "audio_s": round(len(self.buf) / 32000, 2),
+                   **{f"{k}_ms": round((t[k] - w) * 1000) for k in ("eos", "stt", "route", "display", "tts") if k in t}}
+            if "stt" in t and "eos" in t: rec["stt_only_ms"] = round((t["stt"] - t["eos"]) * 1000)
+            if "tts" in t and "display" in t: rec["tts_only_ms"] = round((t["tts"] - t["display"]) * 1000)
+            if err is not None: rec["error"] = type(err).__name__
+            with TIMING_LOG.open("a") as f: f.write(json.dumps(rec) + "\n")
+            _write_wav16(DATA / "last_utterance.wav", bytes(self.buf))
+            log.info("timing %s", rec)
+        except Exception as e:
+            log.warning("timing write failed (%s)", type(e).__name__)
 
 # ---------- web ----------
+async def _warm():
+    """Load whisper + Kokoro off the event loop. The site and Alexa puller are already up."""
+    log.info("warming whisper…")
+    try:
+        await asyncio.to_thread(warmup)
+        log.info("warmup done")
+    except Exception as e:
+        log.warning("warmup failed (%s)", type(e).__name__)
+    finally:
+        disp.boot_note = None
+        if models_ready is not None: models_ready.set()
+
 async def main():
+    global models_ready
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    log.info("warming whisper…"); await asyncio.to_thread(warmup)
+    models_ready = asyncio.Event(); disp.boot_note = "Warming up…"
     app = web.Application()
     disp.add_routes(app)          # GET / (static/display.html), WS /ws, POST /api/event, GET /api/taps
     app.router.add_static("/tts/", TTS_DIR)
     app.router.add_get("/old", lambda r: web.FileResponse(BASE.parent / "display" / "index.html"))  # slice-1 page, rollback
     runner = web.AppRunner(app); await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", HUB_PORT).start()
-    try:   # Alexa jobs from Cloudflare Queue (ALEXA.md §8); stays disabled without the Keychain token
+    for host in http_hosts(HUB_IP):
+        try:
+            await web.TCPSite(runner, host, HUB_PORT).start()
+            log.info("http listening on %s:%s", host, HUB_PORT)
+        except OSError as e:
+            if host == HUB_IP: raise
+            log.warning("loopback bind failed: %s", e)
+    try:   # Alexa jobs from Cloudflare Queue (ALEXA.md §8). A missing token is rechecked inside run().
         from alexa_pull import AlexaPuller
-        alexa = AlexaPuller(disp, route, push_card); alexa.start()   # local ref keeps the task alive
+        if os.environ.get("ALEXA_PULL", "1") == "0":
+            log.info("alexa pull disabled (ALEXA_PULL=0)")
+        else:
+            alexa = AlexaPuller(disp, route, push_card)   # local ref keeps the task alive
+            async def _alexa_alert(name, exc):
+                await disp.emit("error", {"message": "Alexa link stopped", "code": "alexa", "detail": type(exc).__name__})
+            alexa.task = asyncio.create_task(supervise("alexa", alexa.run, on_give_up=_alexa_alert))
     except Exception as e:
         log.warning("alexa pull not started: %s", e)
+
+    app["warm_task"] = asyncio.create_task(_warm())   # BOX-3 may connect during this; Session.finish waits
 
     # Simple explicit reconnect loop (ReconnectLogic without zeroconf backed off for minutes after a reboot)
     while True:
