@@ -230,6 +230,10 @@ flowchart LR
 * `hub/print/*.py` (one, orig, probe, status, send) are earlier experiments. **They all open** `/dev/cu.BlueToothPrinter`**, which is DO NOT USE: it jams the macOS kernel and needs a reboot.**
   * `send.py shopping` still shows how to build a shopping slip: header raster in 24-row bands, centred "WOMBLE" double-size, "shopping list", date, a rule, `[ ] item` lines, 4 feeds. To reuse it, write the bytes to a file and send it with `btprint` instead of the serial port.
 * **Slip format (current, printed OK 2026-10-17):** `ESC @`, `ESC a 1`, then `data/print_header.escpos` (dog), then `\n`, `ESC ! 0x30` + "WOMBLE", `ESC ! 0x00` + "shopping list", the date (`%a %d %b %H:%M`), `ESC a 0`, a 32-dash rule, one `[ ] item` line per item, then `ESC d 8` for extra bottom feed so nothing is cut off. A good reply from btprint ends with status `0x16`.
+* **Reference slip (sample list, printed 2026-10-17 19:37):**
+
+  <img src="sample-slip.jpg" alt="Sample Womble shopping slip" width="320">
+
 * **Paper:** 58 mm, 384 dots. Bottom feed is fixed (`ESC d 8`). Darkness is not set yet; it looks fine for now.
 
 ### 2.8 Kitchen frame (device)
