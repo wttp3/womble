@@ -72,7 +72,23 @@ RECORD_RE = re.compile(r"\brecord\b.*?\bfor\s+(?P<who>andrew|vic\w*|victoria)\b"
 SHOW_RE = re.compile(r"^(?:what'?s|show|read)\s+(?:on\s+)?(?:the\s+|my\s+)?(?P<list>[\w ]+?)\s+list", re.I)
 
 def load_lists():
-    return json.loads(LIST_FILE.read_text()) if LIST_FILE.exists() else {}
+    if not LIST_FILE.exists(): return {}
+    try:
+        raw = LIST_FILE.read_text()
+        if not raw.strip(): raise json.JSONDecodeError("empty file", raw, 0)
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        bad = LIST_FILE.with_name(f"lists.corrupt-{int(time.time())}.json")
+        try: os.replace(LIST_FILE, bad)
+        except OSError: pass
+        log.warning("lists.json unreadable (%s); moved to %s, starting empty", e.msg, bad.name)
+        return {}
+
+def save_lists(lists: dict):
+    tmp = LIST_FILE.with_name(LIST_FILE.name + ".tmp")
+    with open(tmp, "w") as f:
+        f.write(json.dumps(lists, indent=2)); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, LIST_FILE)
 
 def route(text: str) -> dict:
     t = text.strip()
@@ -88,7 +104,7 @@ def route(text: str) -> dict:
     if m := ADD_RE.match(t):
         item, lst = m["item"].strip(), (m["list"] or "shopping").strip().lower()
         lists = load_lists(); lists.setdefault(lst, []).append({"item": item, "ts": time.time()})
-        LIST_FILE.write_text(json.dumps(lists, indent=2))
+        save_lists(lists)
         return {"category": "list.add", "speech": f"Added {item} to {lst}.",
                 "card": {"type": "list", "title": lst.title(), "items": [i["item"] for i in lists[lst]], "highlight": item}}
     if m := SHOW_RE.match(t):

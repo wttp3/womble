@@ -22,5 +22,7 @@ slice1/hub/data/*
 !slice1/hub/data/print_header_dog.png
 !slice1/hub/data/live_stt_test.py
 slice1/hub/print/*.bin
+slice1/backup/*.bin
 # screenshots
+slice1/hub/tests/shots/
 frame-boot*.png
