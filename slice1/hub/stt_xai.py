@@ -1,0 +1,38 @@
+"""xAI grok-voice-transcribe-2.0 batch STT (REST POST /v1/stt).
+Key comes from macOS Keychain (service womble-xai, account decoy) at runtime; never logged."""
+import io, logging, os, subprocess, wave
+import requests
+
+log = logging.getLogger("hub")
+URL = "https://api.x.ai/v1/stt"
+KC_SERVICE, KC_ACCOUNT = "womble-xai", "decoy"
+KEYTERMS = ["milk", "bread", "biscuits", "eggs", "Womble", "Vic", "Andrew", "shopping", "list", "Frida"]
+TIMEOUT = float(os.environ.get("XAI_STT_TIMEOUT", "5"))
+_key = None; _checked = False
+
+def get_key():
+    global _key, _checked
+    if not _checked:
+        _checked = True
+        try:
+            r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT, "-w"],
+                               capture_output=True, text=True, timeout=5)
+            _key = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+        except Exception:
+            _key = None
+        if not _key: log.warning("xai stt disabled (no Keychain item womble-xai)")
+    return _key
+
+def pcm_to_wav(pcm: bytes, rate=16000) -> bytes:
+    b = io.BytesIO()
+    with wave.open(b, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(pcm)
+    return b.getvalue()
+
+def transcribe_xai(pcm: bytes, key: str, session=requests) -> str:
+    data = [("language", "en")] + [("keyterm", k) for k in KEYTERMS]
+    r = session.post(URL, headers={"Authorization": f"Bearer {key}"}, data=data,
+                     files={"file": ("utt.wav", pcm_to_wav(pcm), "audio/wav")}, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise RuntimeError(f"http {r.status_code}")
+    return (r.json().get("text") or "").strip()

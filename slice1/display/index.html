@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kitchen</title><style>
+body{margin:0;font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh}
+#card{max-width:90vw;font-size:4vh}#card h1{font-size:7vh;margin:0 0 2vh}li.hl{color:#ffcc33;font-weight:bold}
+#clock{position:fixed;top:2vh;right:3vw;font-size:3vh;opacity:.6}#st{position:fixed;bottom:1vh;left:2vw;font-size:2vh;opacity:.4}
+</style></head><body><div id="clock"></div><div id="card"><h1>Ready</h1></div><div id="st">connecting…</div>
+<script>
+const $=id=>document.getElementById(id);setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),1000);
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function render(c){let h=`<h1>${esc(c.title||'')}</h1>`;
+ if(c.type==='list')h+='<ul>'+(c.items||[]).map(i=>`<li class="${i===c.highlight?'hl':''}">${esc(i)}</li>`).join('')+'</ul>';
+ else h+=`<p>${esc(c.body||'')}</p>`;$('card').innerHTML=h;}
+(function conn(){const ws=new WebSocket(`ws://${location.host}/ws`);
+ ws.onopen=()=>$('st').textContent='live';ws.onmessage=e=>render(JSON.parse(e.data));
+ ws.onclose=()=>{$('st').textContent='reconnecting…';setTimeout(conn,2000)};})();
+</script></body></html>

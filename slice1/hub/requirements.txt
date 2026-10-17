@@ -1,0 +1,7 @@
+aioesphomeapi>=30
+mlx-whisper
+mlx-audio            # Kokoro via MLX; hub falls back to macOS `say` on failure
+misaki[en]           # required by Kokoro in mlx-audio
+numpy
+soundfile
+aiohttp

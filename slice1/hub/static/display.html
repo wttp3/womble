@@ -1,0 +1,220 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=1280,height=800,initial-scale=1,user-scalable=no">
+<title>Womble #1</title>
+<!-- Womble #1 kitchen display. Spec: DISPLAY.md. Vanilla ES2017 for WebView 106; no external assets. -->
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:1280px;height:800px;overflow:hidden;background:#0d0f12;color:#f2efe8;
+ font-family:Roboto,"Noto Sans",Arial,sans-serif;-webkit-user-select:none;user-select:none}
+svg{width:1em;height:1em;vertical-align:-.12em;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+#bar{position:absolute;left:0;top:0;width:1280px;height:64px;padding:0 32px;display:flex;align-items:center;justify-content:space-between;font-size:26px;color:#9aa3ad;border-bottom:2px solid #1d2229}
+#brand{color:#ffc94d;font-weight:600}.sep{margin:0 14px;color:#5d6873}
+#dot{display:inline-block;width:14px;height:14px;border-radius:7px;background:#3ccf6e;margin-right:10px;vertical-align:middle}
+#clk{font-size:34px;color:#f2efe8;font-weight:500}
+#main{position:absolute;left:0;top:64px;width:1280px;height:656px;padding:32px 48px}
+body.full #main{height:736px}body.full #np{display:none}
+#np{position:absolute;left:0;top:720px;width:1280px;height:80px;padding:0 32px;display:none;align-items:center;gap:20px;background:#151a20;border-top:2px solid #1d2229;font-size:28px}
+#np.on{display:flex}#np .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#np .t span{color:#9aa3ad}
+#np img,#np .art{width:56px;height:56px;border-radius:6px;background:#3a4a5c;object-fit:cover}
+#toast{position:absolute;left:48px;right:48px;bottom:24px;height:80px;border-radius:14px;background:#26303a;display:none;align-items:center;padding:0 28px;font-size:32px;z-index:5}
+#toast.on{display:flex}body.np #toast{bottom:104px}
+#dim{position:fixed;left:0;top:0;width:1280px;height:800px;background:#000;opacity:0;pointer-events:none;z-index:9}
+#dim.on{opacity:.9}
+.btn{position:absolute;width:120px;height:120px;border-radius:60px;background:#1f262e;color:#f2efe8;display:flex;align-items:center;justify-content:center;font-size:56px;border:0}
+.btn:active{background:#3a4552}.btn.pri{background:#ffc94d;color:#0d0f12}
+#x{top:88px;right:48px;width:96px;height:96px;font-size:44px;display:none;z-index:4}#x.on{display:flex}
+.muted{color:#9aa3ad}.accent{color:#ffc94d}.ok{color:#3ccf6e}.err{color:#ff6b5b}
+h1{font-size:64px;line-height:1.1;margin:0 0 24px;font-weight:600;max-width:1060px}
+.big{font-size:44px;line-height:1.3;max-width:1150px}
+.label{font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#9aa3ad;margin-bottom:12px}
+.clock{font-size:200px;font-weight:300;line-height:1;letter-spacing:-4px}
+.date{font-size:40px;color:#9aa3ad;margin-top:8px}.wx{font-size:36px;margin-top:40px}
+.foot{position:absolute;left:48px;top:560px;font-size:24px;letter-spacing:2px;color:#5d6873}
+.panel{position:absolute;left:620px;top:32px;width:612px;height:592px;background:#151a20;border-radius:16px;padding:20px 28px;overflow:hidden}
+.panel .h{display:flex;justify-content:space-between;font-size:30px;font-weight:600;margin-bottom:10px}
+.panel ul{margin:0;padding:0;list-style:none;font-size:34px;line-height:1.45}.panel li:before{content:"• ";color:#5d6873}
+.center{height:592px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.ring{width:220px;height:220px;border-radius:110px;border:14px solid #ffc94d;margin-bottom:40px}
+.pulse{animation:p 1.6s ease-in-out infinite}@keyframes p{50%{opacity:.35}}
+.chips{margin-top:28px;font-size:28px;color:#9aa3ad}
+.lg{columns:2;column-gap:64px;font-size:40px;line-height:1.5;list-style:none;padding:0;margin:0}
+.lg li{break-inside:avoid}.lg li.hl{color:#0d0f12;background:#ffc94d;border-radius:8px;padding:0 12px;margin-left:-12px}
+.items{font-size:36px;line-height:1.4;margin-top:20px}
+.rl{position:absolute;left:48px;top:32px;width:440px;height:600px;overflow:hidden}
+.rr{position:absolute;left:520px;top:32px;width:712px;height:600px;overflow:hidden}
+.rl ul{list-style:none;padding:0;margin:0;font-size:30px;line-height:1.5}.rr ol{padding-left:44px;margin:0;font-size:32px;line-height:1.4}.rr li{margin-bottom:14px}
+.sn{font-size:40px;color:#ffc94d;font-weight:600}.st{font-size:76px;line-height:1.25;font-weight:500;margin-top:20px;max-width:1184px}
+.sf{position:absolute;left:48px;bottom:40px;font-size:28px;color:#9aa3ad;width:560px}
+.tm{position:absolute;left:48px;bottom:96px;font-size:56px;color:#ffc94d;font-weight:600}
+.art{position:absolute;left:48px;top:48px;width:400px;height:400px;border-radius:16px;background:#3a4a5c;object-fit:cover}
+.ni{position:absolute;left:500px;top:64px;width:732px}
+.recb{position:absolute;right:48px;top:548px;height:64px;padding:0 26px;border-radius:32px;background:#1f262e;color:#ffc94d;border:0;font-size:26px;font-family:inherit}
+.rc{display:flex;gap:48px;justify-content:center;margin-top:20px}.rc .btn{position:static;width:300px;height:180px;border-radius:24px;font-size:48px;flex-direction:column;font-family:inherit}
+.rc .btn small{font-size:24px;color:inherit;opacity:.75;margin-top:8px}
+.say{font-size:96px;font-weight:600;line-height:1.1;margin:0 0 12px}.say b{color:#ffc94d}
+.cnt{position:absolute;left:48px;bottom:36px;right:48px;display:flex;justify-content:space-between;font-size:28px;color:#9aa3ad}
+.pb{height:10px;background:#2a313a;border-radius:5px;margin-top:40px}.pb i{display:block;height:10px;background:#ffc94d;border-radius:5px}
+</style></head><body>
+<div id="bar"><div><b id="brand">Womble #1</b><span class="sep">·</span><span id="dot"></span><span id="lbl">Connecting…</span></div><div id="clk"></div></div>
+<div id="main"></div>
+<button id="x" class="btn" data-a="dismiss"></button>
+<div id="np"></div><div id="toast"></div><div id="dim"></div>
+<script>
+'use strict';
+var $=function(i){return document.getElementById(i)};
+var ICON={
+ x:'<path d="M6 6l12 12M18 6L6 18"/>',
+ play:'<path d="M7 5l12 7-12 7z" fill="currentColor"/>',
+ pause:'<path d="M8 5v14M16 5v14" stroke-width="3.5"/>',
+ next:'<path d="M6 5l10 7-10 7z" fill="currentColor"/><path d="M19 5v14"/>',
+ prev:'<path d="M18 5L8 12l10 7z" fill="currentColor"/><path d="M5 5v14"/>',
+ right:'<path d="M9 5l7 7-7 7"/>', left:'<path d="M15 5l-7 7 7 7"/>',
+ check:'<path d="M5 12l5 5 9-10"/>', timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/>',
+ sun:'<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+ cloud:'<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 18z"/>',
+ rain:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>',
+ snow:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M8 19h.01M12 21h.01M16 19h.01" stroke-width="3"/>',
+ storm:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M12 15l-2 4h4l-2 4"/>'
+};
+function ic(n){return '<svg viewBox="0 0 24 24">'+ICON[n]+'</svg>'}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function wxIcon(c){return c<=1?'sun':c<=48?'cloud':c<=67||(c>=80&&c<=82)?'rain':c<=86?'snow':'storm'}
+function words(s){return String(s||'').split(/\s+/).filter(Boolean).length}
+function short(s){var w=String(s||'').split(/\s+/);return w.length<=60?s:w.slice(0,60).join(' ')+' …'}
+var Q=location.search, HOUR=(Q.match(/hour=(\d+)/)||[])[1];
+var DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
+function now(){var d=new Date();if(HOUR!=null){d.setHours(+HOUR,(Q.match(/min=(\d+)/)||[0,7])[1])}return d}
+function hhmm(d){return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+
+// ---------- model ----------
+var M={name:'Womble #1',features:{},lists:{},weather:null,media:null,recipe:null,step:null,stepData:null};
+var cur={s:'idle',d:{}},timer=null,toastT=null,ws=null,online=false,wakeT=null,timerEnd=0;
+var RANK={recmenu:1,record:8,idle:0,playing:1,research:2,list:2,reply:2,recipe:3,step:4,error:5,thinking:6,listening:7};
+var DUR={recmenu:60,list:12,research:8,recipe:600,error:10,playing:20,thinking:45,listening:12};
+
+function base(){return M.stepData?['step',M.stepData]:['idle',{}]}
+function show(s,d,ttl){
+ cur={s:s,d:d||{}};clearTimeout(timer);
+ var t=ttl!=null?ttl:(s==='reply'?Math.min(90,30+Math.round(words(d.short||d.body)/10)):DUR[s]);
+ if(s==='error'&&d.blocking)t=0;
+ if(s==='thinking')t=45;
+ if(t)timer=setTimeout(function(){
+   if(s==='thinking'){toast('Still working, I’ll show it when it’s ready','info')}
+   var b=base();show(b[0],b[1]);},t*1000);
+ if(s!=='idle')wake();
+ render();
+}
+function toast(text,kind){var e=$('toast');e.innerHTML=(kind==='ok'?'<span class="ok" style="margin-right:16px">'+ic('check')+'</span>':'')+esc(text);
+ e.className='on';clearTimeout(toastT);toastT=setTimeout(function(){e.className=''},6000)}
+function offer(s,d,ttl){ // priority: lower-ranked event during a higher state -> toast (thinking always yields)
+ if(cur.s!=='thinking'&&cur.s!=='listening'&&RANK[s]<RANK[cur.s]){toast(d._toast||'Updated','ok');return}
+ show(s,d,ttl)}
+
+// ---------- render ----------
+function render(){
+ var s=cur.s,d=cur.d,h='';
+ document.body.className=(s==='recipe'||s==='step'||s==='playing')?'full':'';
+ $('brand').textContent=M.name;document.title=M.name;
+ var st={listening:['#ffc94d','Listening'],thinking:['#5d8bd6','Working…'],error:['#ff6b5b','Problem']}[s]||(online?['#3ccf6e','Ready']:['#ff6b5b','Offline · reconnecting']);
+ $('dot').style.background=st[0];$('lbl').textContent=st[1];
+ $('x').className=(s==='idle'||s==='listening')?'btn':'btn on';var RC=M.record||{};function rc(k){var c=RC[k]||{pos:0,neg:0};return c.pos+' womble · '+c.neg+' other'}
+ if(s==='idle'){var n=now(),w=M.weather,sh=(M.lists.shopping||[]);
+  h='<div style="position:absolute;left:48px;top:32px;width:540px"><div class="clock">'+hhmm(n)+'</div><div class="date">'+DAYS[n.getDay()]+' '+n.getDate()+' '+MON[n.getMonth()]+'</div>'+
+   (w?'<div class="wx"><span class="accent">'+ic(wxIcon(w.code))+'</span> '+w.temp+'° <span class="muted">· max '+w.max+'° · min '+w.min+'°</span></div>':'<div class="wx muted">Weather unavailable</div>')+'</div>'+
+   '<div class="foot">'+esc(M.name.toUpperCase())+' · SAY “WOMBLE”</div>'+
+   '<button class="recb" data-a="record.menu" style="left:48px;right:auto;top:600px">● Record Womble</button>'+
+   '<div class="panel"><div class="h"><span>Shopping</span><span class="muted">'+sh.length+'</span></div><ul>'+
+   (sh.length?sh.slice(0,9).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+(sh.length>9?'<li class="muted" style="list-style:none">+'+(sh.length-9)+' more</li>':''):'<li class="muted">Nothing yet. Say “add eggs to shopping”</li>')+'</ul></div>';}
+ else if(s==='recmenu')h='<div class="center"><div class="label">Wake-word training · round 2</div><h1>Record Womble</h1><div class="big muted">Who is recording? About 50 “Womble”s and 15 other words, a few minutes.</div>'+
+   (d.done?'<div class="chips ok">'+ic('check')+' '+esc(cap(d.speaker||''))+': kept '+(d.kept||{}).pos+' womble, '+(d.kept||{}).neg+' other ('+esc(d.reason)+')</div>':'')+
+   '<div class="rc"><button class="btn pri" data-a="record.start.andrew">Andrew<small>'+rc('andrew')+'</small></button><button class="btn pri" data-a="record.start.vic">Vic<small>'+rc('vic')+'</small></button></div>'+
+   '<div class="chips">Or say “Okay Nabu, record womble for Vic”. Say “stop” or tap ✕ to finish.</div></div>';
+ else if(s==='record'){var stc=/^rejected/.test(d.status||'')?'err':d.status==='saved'?'ok':d.status==='listening'?'accent':'muted';
+  h='<div class="center"><div class="label">Recording '+esc(cap(d.speaker||''))+' · '+(d.phase==='neg'?'other words':'Womble')+' · '+esc(d.prompt||'')+'</div>'+
+   '<div class="say">'+(d.phase==='neg'?'Say “<b>'+esc(d.phrase)+'</b>”':'Say “<b>Womble</b>” now')+'</div>'+
+   '<div class="big">'+esc(d.n)+' / '+esc(d.total)+(d.phase==='pos'?' · <span class="accent">'+esc(d.prompt)+'</span>':'')+'</div>'+
+   '<div class="ring'+(d.status==='listening'?' pulse':'')+'" style="width:90px;height:90px;border-width:10px;margin:28px 0 12px;border-color:'+(d.status==='listening'?'#ffc94d':'#3a4552')+'"></div>'+
+   '<div class="chips '+stc+'" style="margin-top:0">'+esc(d.status||'')+'</div></div>'+
+   '<div class="cnt"><span>Andrew: '+rc('andrew')+'</span><span>Say “stop” or tap ✕</span><span>Vic: '+rc('vic')+'</span></div>';}
+ else if(s==='listening')h='<div class="center"><div class="ring pulse"></div><h1>Listening…</h1><div class="chips">Say “add …”, “find a recipe for …”, “play …”</div></div>';
+ else if(s==='thinking')h='<div class="center"><div class="ring" style="border-color:#5d8bd6;border-style:dotted"></div><div class="label">You said</div><div class="big">“'+esc(d.text)+'”</div><div class="chips">'+(d.source==='alexa'?esc(d.device||d.room||'Echo')+' · ':'')+(d.bot?'Asking the '+esc(d.bot)+' bot…':'Working…')+'</div></div>';
+ else if(s==='reply')h='<div class="label">'+esc(d.source||'Womble')+'</div><h1>'+esc(d.title)+'</h1><div class="big">'+esc(d.short||short(d.body))+'</div>'+
+   (d.items&&d.items.length?'<ul class="items">'+d.items.slice(0,6).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+'</ul>':'')+
+   (words(d.body)>60?'<div class="chips">Shortened on screen. Say “print that” for the full text.</div>':'');
+ else if(s==='list'){var hl=d.highlight||[],its=d.items||[],nm=d.list||'list',more=its.length>14;
+  h='<div class="label ok">'+(d.action==='add'?ic('check')+' Added to '+esc(cap(nm)):d.action==='remove'?'Removed from '+esc(cap(nm)):esc(cap(nm)))+'</div><h1>'+esc(cap(nm))+' <span class="muted" style="font-size:40px">· '+its.length+' items</span></h1><ul class="lg">'+
+   its.slice(more?its.length-13:0).map(function(i){return '<li class="'+(hl.indexOf(i)>=0?'hl':'')+'">'+esc(i)+'</li>'}).join('')+(more?'<li class="muted">+'+(its.length-13)+' earlier</li>':'')+'</ul>'+
+   (M.features.printer?'<div class="chips" style="position:absolute;bottom:40px">Say “print '+esc(nm)+'”</div>':'');}
+ else if(s==='research')h='<div class="center"><div class="label ok" style="font-size:30px">'+ic('check')+' Added to research pile</div><h1 style="font-size:72px">'+esc(d.title)+'</h1>'+(d.note?'<div class="big muted">“'+esc(d.note)+'”</div>':'')+'<div class="chips">'+(d.count||'')+' items in the pile · the research bot will report back later</div></div>';
+ else if(s==='recipe'){var r=d;h='<div class="rl"><div class="label">'+esc(r.title)+(r.minutes?' · '+r.minutes+' min':'')+(r.serves?' · serves '+r.serves:'')+'</div><ul>'+(r.ingredients||[]).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+'</ul></div>'+
+   '<div class="rr"><div class="label">Method · say “start cooking” or tap</div><ol>'+(r.steps||[]).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+'</ol></div>'+
+   '<button class="btn pri" data-a="recipe.next" style="right:48px;bottom:40px">'+ic('right')+'</button>';}
+ else if(s==='step'){var tl=timerEnd?Math.max(0,Math.round((timerEnd-Date.now())/1000)):null;
+  h='<div class="sn">Step '+(d.index+1)+' of '+d.total+(M.recipe?' · '+esc(M.recipe.title):'')+'</div><div class="st">'+esc(d.text)+'</div>'+
+   '<div class="sf">Say “next”, “back”, “repeat” or “ingredients”</div>'+(tl!=null?'<div class="tm" id="tm">'+ic('timer')+' '+mmss(tl)+'</div>':'')+
+   '<button class="btn" data-a="recipe.prev" style="right:200px;bottom:32px">'+ic('left')+'</button><button class="btn pri" data-a="recipe.next" style="right:48px;bottom:32px">'+ic('right')+'</button>';}
+ else if(s==='playing'){var m=M.media||d,p=m.duration_s?Math.min(100,100*mediaPos()/m.duration_s):0;
+  h=(m.art_url?'<img class="art" src="'+esc(m.art_url)+'">':'<div class="art"></div>')+'<div class="ni"><div class="label">Now playing · '+esc(m.player||'')+'</div><h1>'+esc(m.title)+'</h1><div class="big muted">'+esc([m.artist,m.album].filter(Boolean).join(' · '))+'</div>'+
+   '<div class="pb"><i style="width:'+p.toFixed(1)+'%"></i></div><div class="muted" style="font-size:28px;margin-top:10px;display:flex;justify-content:space-between"><span>'+mmss(mediaPos())+'</span><span>'+mmss(m.duration_s||0)+'</span></div></div>'+
+   '<button class="btn" data-a="media.prev" style="left:500px;top:420px">'+ic('prev')+'</button><button class="btn pri" data-a="media.toggle" style="left:648px;top:420px">'+ic(m.state==='playing'?'pause':'play')+'</button><button class="btn" data-a="media.next" style="left:796px;top:420px">'+ic('next')+'</button>';}
+ else if(s==='error')h='<div class="center"><div class="ring" style="border-color:#ff6b5b"></div><h1 class="err">'+esc(d.message)+'</h1>'+(d.detail?'<div class="big muted">'+esc(d.detail)+'</div>':'')+
+   '<div class="chips">'+(d.retry_in_s?'Retrying in '+d.retry_in_s+' s · ':'')+'code '+esc(d.code||'?')+'</div></div>';
+ $('main').innerHTML=h;renderNP();
+}
+function cap(s){s=String(s);return s.charAt(0).toUpperCase()+s.slice(1)}
+function mmss(t){t=Math.max(0,Math.round(t));return Math.floor(t/60)+':'+('0'+t%60).slice(-2)}
+var mediaAt=0;function mediaPos(){var m=M.media;if(!m)return 0;return (m.position_s||0)+(m.state==='playing'?(Date.now()-mediaAt)/1000:0)}
+function renderNP(){var m=M.media,e=$('np');if(!m||m.state==='idle'){e.className='';document.body.classList.remove('np');return}
+ e.className='on';document.body.classList.add('np');e.innerHTML=(m.art_url?'<img src="'+esc(m.art_url)+'">':'<div class="art"></div>')+'<div class="t"><b>'+esc(m.title)+'</b> <span>· '+esc(m.artist||'')+' · '+esc(m.player||'')+'</span></div>'+
+ '<button class="btn" data-a="media.toggle" style="position:static;width:64px;height:64px;font-size:30px">'+ic(m.state==='playing'?'pause':'play')+'</button>'}
+
+// ---------- events ----------
+function handle(m){
+ if(!m.event&&m.type){ // slice-1 legacy cards
+  if(m.type==='list')m={event:'list.updated',data:{list:String(m.title||'').toLowerCase(),action:m.highlight?'add':'show',items:m.items||[],highlight:m.highlight?[m.highlight]:[]}};
+  else m={event:'reply',data:{title:m.title,body:m.body}};}
+ var d=m.data||{},ttl=m.ttl_s||null;
+ switch(m.event){
+ case 'snapshot':M.name=d.device_name||M.name;M.features=d.features||{};M.lists=d.lists||{};M.weather=d.weather;M.media=d.media;mediaAt=Date.now();M.recipe=d.recipe;M.record=d.record||M.record;
+  if(d.recipe&&d.step!=null){M.stepData={index:d.step,total:d.recipe.steps.length,text:d.recipe.steps[d.step]}}
+  if(cur.s==='idle'||cur.s==='step'){var b=base();show(b[0],b[1])}else render();break;
+ case 'idle':M.stepData=null;timerEnd=0;show('idle',{});break;
+ case 'weather':M.weather=d;if(cur.s==='idle')render();break;
+ case 'voice.listening':show('listening',d);break;
+ case 'voice.heard':show('thinking',d);break;
+ case 'voice.cancel':var b2=base();show(b2[0],b2[1]);break;
+ case 'reply':offer('reply',d,ttl);break;
+ case 'list.updated':M.lists[d.list]=d.items||[];d._toast=(d.action==='add'?'Added '+(d.highlight||[]).join(', ')+' to ':'Updated ')+d.list;offer('list',d,ttl);break;
+ case 'research.added':d._toast='Added “'+d.title+'” to research pile';offer('research',d,ttl);break;
+ case 'recipe':M.recipe=d;M.stepData=null;timerEnd=0;offer('recipe',d,ttl);break;
+ case 'recipe.step':M.stepData=d;timerEnd=d.timer_s?Date.now()+d.timer_s*1000:0;show('step',d,0);break;
+ case 'media.state':M.media=d;mediaAt=Date.now();if(d.focus){d._toast='Now playing: '+d.title;offer('playing',d,ttl)}else if(cur.s==='playing')render();else renderNP();break;
+ case 'home.done':toast(d.text,'ok');break;
+ case 'record.state':M.record=d.counts||M.record;if(d.active)show('record',d,0);break;
+ case 'record.done':M.record=d.counts||M.record;show('recmenu',{done:1,speaker:d.speaker,kept:d.kept,reason:d.reason},30);break;
+ case 'toast':toast(d.text,d.kind);break;
+ case 'error':d._toast=d.message;show('error',d,ttl);break;
+ }
+}
+function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))}
+document.addEventListener('click',function(e){var b=e.target.closest('[data-a]');if(!b)return;var a=b.getAttribute('data-a');
+ if(a==='record.menu'){show('recmenu',{});return}
+ if(a==='dismiss'){M.stepData=null;timerEnd=0;show('idle',{})}
+ send({event:'tap',action:a});});
+$('x').innerHTML=ic('x');
+
+// ---------- night dim 23:00-07:00, brightened by wake/foreground for 60 s ----------
+function night(){var h=now().getHours();return h>=23||h<7}
+function wake(){$('dim').className='';clearTimeout(wakeT);wakeT=setTimeout(dimCheck,60000)}
+function dimCheck(){$('dim').className=(night()&&(cur.s==='idle'||cur.s==='playing'))?'on':''}
+
+// ---------- clock: once per minute aligned to :00; step timer per second only when visible ----------
+function tick(){$('clk').textContent=hhmm(now());if(cur.s==='idle')render();dimCheck();setTimeout(tick,60000-Date.now()%60000+50)}
+setInterval(function(){if(cur.s==='step'&&timerEnd){var e=$('tm'),t=Math.max(0,Math.round((timerEnd-Date.now())/1000));if(e)e.innerHTML=ic('timer')+' '+(t?mmss(t):'Done')}},1000);
+
+function conn(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
+ ws.onopen=function(){online=true;send({event:'hello',client:'kitchen-frame',ver:1});render()};
+ ws.onmessage=function(e){try{handle(JSON.parse(e.data))}catch(x){console.log('bad msg',x)}};
+ ws.onclose=function(){if(online){online=false;render()}setTimeout(conn,2000+Math.random()*1000)};}
+tick();render();if(location.host)conn();
+</script></body></html>

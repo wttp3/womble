@@ -1,0 +1,118 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "frida",
+      "intents": [
+        {
+          "name": "AddIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "add {query}",
+            "please add {query}",
+            "to add {query}",
+            "put {query}",
+            "add some {query}",
+            "we need {query}",
+            "we're out of {query}",
+            "add on {query}"
+          ]
+        },
+        {
+          "name": "FindIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "find {query}",
+            "please find {query}",
+            "to find {query}",
+            "find me {query}",
+            "look up {query}",
+            "search for {query}",
+            "search {query}",
+            "find out {query}"
+          ]
+        },
+        {
+          "name": "SaveIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "save {query}",
+            "please save {query}",
+            "to save {query}",
+            "save this {query}",
+            "note {query}",
+            "make a note {query}"
+          ]
+        },
+        {
+          "name": "RememberIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "remember {query}",
+            "to remember {query}",
+            "please remember {query}",
+            "remind me {query}"
+          ]
+        },
+        {
+          "name": "CaptureIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "please {query}",
+            "to {query}",
+            "that {query}",
+            "I need {query}",
+            "can you {query}",
+            "could you {query}",
+            "tell the kitchen {query}"
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        }
+      ],
+      "types": []
+    }
+  }
+}

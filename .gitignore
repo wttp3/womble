@@ -1,0 +1,26 @@
+# secrets / local config
+secrets.yaml
+.env
+.env.*
+.dev.vars
+# build + deps
+.esphome/
+.venv/
+node_modules/
+.cloudflare/
+.wrangler/
+__pycache__/
+*.pyc
+.DS_Store
+# logs + backups
+*.log
+devlog*.txt
+*.bak*
+# runtime data (lists, voice clips, tts cache, device ids)
+slice1/hub/data/*
+!slice1/hub/data/print_header.escpos
+!slice1/hub/data/print_header_dog.png
+!slice1/hub/data/live_stt_test.py
+slice1/hub/print/*.bin
+# screenshots
+frame-boot*.png
