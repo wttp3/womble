@@ -11,6 +11,19 @@ from aiohttp import web, ClientSession, ClientTimeout
 
 log = logging.getLogger("display")
 STATIC = Path(__file__).resolve().parent / "static"
+# Small same-origin copies of docs/womble-dog.png. The 1.2 MB original is not served.
+ASSETS = {
+    "womble-mark.webp": "image/webp",
+    "favicon.png": "image/png",
+    "apple-touch-icon.png": "image/png",
+}
+
+
+def asset_response(name: str) -> web.FileResponse:
+    return web.FileResponse(STATIC / name, headers={
+        "Content-Type": ASSETS[name],
+        "Cache-Control": "public, max-age=86400",
+    })
 
 
 def http_hosts(hub_ip: str) -> list[str]:
@@ -200,6 +213,10 @@ class Display:
 
     def add_routes(self, app: web.Application):
         app.router.add_get("/", lambda r: web.FileResponse(STATIC / "display.html"))
+        app.router.add_get("/static/womble-mark.webp", lambda r: asset_response("womble-mark.webp"))
+        app.router.add_get("/favicon.png", lambda r: asset_response("favicon.png"))
+        app.router.add_get("/favicon.ico", lambda r: asset_response("favicon.png"))
+        app.router.add_get("/apple-touch-icon.png", lambda r: asset_response("apple-touch-icon.png"))
         app.router.add_get("/ws", self.ws_handler)
         app.router.add_post("/api/event", self.api_event)
         app.router.add_get("/api/taps", self.api_taps)

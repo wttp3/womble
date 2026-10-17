@@ -9,13 +9,15 @@ Mockup: `mockups/kitchen.html?s=<state>`. PNGs: `mockups/01-idle.png` to `10-err
 - This plan keeps that transport and reconnect logic. It adds an `event` envelope (§5) and stays compatible with both slice-1 card types.
 
 ## 1. Branding
-- The project name **"Womble #1"** is always visible: amber, semibold, 26 px, at the left of the status bar, followed by "·" and the status label.
+- The project name **"Womble #1"** is always visible: amber, semibold, 26 px, in the status bar, followed by "·" and the status label.
+- To its left, a dog mark and a cream **WOMBLE** wordmark. The mark is a small same-origin WebP cropped from `docs/womble-dog.png` (not the 1.2 MB original). The device name still comes from `snapshot.device_name`, so a #2 display keeps the wordmark and changes the name.
+- The page links `/favicon.png` and `/apple-touch-icon.png`, the same dog on the display background.
 - The idle screen also has a quiet footer line, "WOMBLE #1 · SAY “WOMBLE”" (24 px, tracked caps, dim grey), at the bottom of the clock column.
-- The `<title>` is "Womble #1". The name comes from the hub's `snapshot.device_name`, so other displays (#2…) can reuse the same page.
+- The `<title>` is "Womble #1".
 
 ## 2. Device constraints → design rules
 The device is a PF1007L: Android 6.0.1, WebView 106 in Fully Kiosk, 1 GB RAM, Allwinner A33.
-- One static HTML file with inline CSS and vanilla JS. No frameworks, no webfonts, no build step. Use the system font (Roboto).
+- One HTML file with inline CSS and vanilla JS. No frameworks, no webfonts, no build step. Use the system font (Roboto). The dog mark, favicon and apple-touch icon are the only extra files, and they are same-origin.
 - Fixed px layout for 1280×800 with viewport `width=1280`, and Fully zoom off. [? confirm devicePixelRatio = 1]
 - Re-render by swapping `#main` innerHTML. Keep it under ~150 DOM nodes per screen.
 - Animation is limited to the opacity pulse on the "listening" ring. No layout transitions, shadows, blur or video.

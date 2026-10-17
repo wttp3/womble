@@ -1,9 +1,18 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Kitchen</title><style>
-body{margin:0;font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh}
+<title>Womble</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#0d0f12;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh}
 #card{max-width:90vw;font-size:4vh}#card h1{font-size:7vh;margin:0 0 2vh}li.hl{color:#ffcc33;font-weight:bold}
-#clock{position:fixed;top:2vh;right:3vw;font-size:3vh;opacity:.6}#st{position:fixed;bottom:1vh;left:2vw;font-size:2vh;opacity:.4}
-</style></head><body><div id="clock"></div><div id="card"><h1>Ready</h1></div><div id="st">connecting…</div>
+#clock{position:fixed;top:2vh;right:3vw;font-size:3vh;opacity:.6}
+#brand{position:fixed;top:1.6vh;left:2.4vw;display:flex;align-items:center;gap:1.2vw}
+#brand img{height:7.2vh;width:auto;display:block}
+.wordmark{font-weight:700;letter-spacing:.16em;font-size:3vh;color:#ffc94d}
+#st{position:fixed;bottom:1vh;left:2vw;font-size:2vh;opacity:.4}
+</style></head><body>
+<div id="brand"><img src="/static/womble-mark.webp?v=1" alt="" width="90" height="64"><div class="wordmark">WOMBLE</div></div>
+<div id="clock"></div><div id="card"><h1>Ready</h1></div><div id="st">connecting…</div>
 <script>
 const $=id=>document.getElementById(id);setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),1000);
 const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
