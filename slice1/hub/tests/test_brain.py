@@ -4,7 +4,7 @@ No network and no Keychain. Run from anywhere:
 
   python tests/test_brain.py
 """
-import asyncio, json, logging, os, sys, tempfile, time, types
+import asyncio, json, logging, os, socket, sys, tempfile, time, types
 from pathlib import Path
 
 os.environ.setdefault("BOX3_NOISE_PSK", "unused")
@@ -382,6 +382,46 @@ async def main():
         brain_core._families = real_families
         blog.removeHandler(handler)
     print("PASS stall log names the stage")
+
+    # Real resolver. The macOS failure was getaddrinfo(..., SOCK_STREAM) in
+    # the family slot (AF_UNIX), which raises "ai_family not supported".
+    local = brain_core.resolve_addresses("localhost", 80)
+    check(local, "localhost did not resolve")
+    check(all(item[0] in (socket.AF_INET, socket.AF_INET6) for item in local), local)
+    if any(item[0] == socket.AF_INET for item in local):
+        check(local[0][0] == socket.AF_INET, "IPv4 was not first for localhost")
+    check(brain_core._families("localhost").startswith("ipv4="), brain_core._families("localhost"))
+    try:
+        remote = brain_core.resolve_addresses("api.x.ai", 443)
+    except socket.gaierror as exc:
+        if brain_core._family_rejected(exc):
+            raise SystemExit("FAIL api.x.ai family rejected: " + str(exc))
+        print("SKIP api.x.ai offline (" + str(exc) + ")")
+    else:
+        check(remote, "api.x.ai returned no addresses")
+        if any(item[0] == socket.AF_INET for item in remote):
+            check(remote[0][0] == socket.AF_INET, "IPv4 was not first for api.x.ai")
+        print("api.x.ai " + brain_core._families("api.x.ai"))
+
+    import urllib3.util.connection as cn
+    brain_core._install_ipv4_first()
+    real_resolve = brain_core.resolve_addresses
+
+    def reject(host, port=443):
+        raise socket.gaierror(getattr(socket, "EAI_FAMILY", 5), "ai_family not supported")
+
+    brain_core.resolve_addresses = reject
+    try:
+        try:
+            sock = cn.create_connection(("127.0.0.1", 9), timeout=1)
+            sock.close()
+        except socket.gaierror as exc:
+            raise SystemExit("FAIL resolver fallback still raised " + str(exc))
+        except OSError as exc:
+            check(not brain_core._family_rejected(exc), "fallback connect: " + str(exc))
+    finally:
+        brain_core.resolve_addresses = real_resolve
+    print("PASS resolver AF_UNSPEC, IPv4 first, urllib3 fallback")
 
     class Client:
         def __init__(self):

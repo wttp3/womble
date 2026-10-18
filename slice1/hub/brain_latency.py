@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from brain.core import OFFLINE, Brain, _API_HOST, _families, _proxy_label
+from brain.core import OFFLINE, Brain, _API_HOST, _families, _proxy_label, default_transport
 from brain.key import get_key
 from lists import ListStore
 
@@ -131,10 +131,12 @@ async def main():
         # latency run cannot write the hub's lists.json.
         store = ListStore(Path(tempfile.mkdtemp()) / "lists.json")
         hub.LISTS = store
-        hub.BRAIN = Brain(store, hub.disp, timeout=budget)
+        # Same default_transport the running hub's Brain uses, including the
+        # AF_UNSPEC resolver. route() calls this object.
+        hub.BRAIN = Brain(store, hub.disp, timeout=budget, transport=default_transport)
     else:
         store = ListStore(Path(tempfile.mkdtemp()) / "lists.json")
-        brain = Brain(store, timeout=budget)
+        brain = Brain(store, timeout=budget, transport=default_transport)
     totals, ttfts, failed = [], [], 0
     mode = "route" if args.route else "handle"
     print(f"{'ms':>8}  {'ttft':>8}  prompt   ({mode}, budget {budget:.0f}s)")

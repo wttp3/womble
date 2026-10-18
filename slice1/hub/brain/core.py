@@ -2,7 +2,7 @@
 
 Transport-neutral. handle() returns a Reply and does not know about the BOX-3.
 """
-import asyncio, contextvars, json, logging, os, re, socket, threading, time
+import asyncio, contextvars, errno, json, logging, os, re, socket, threading, time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -169,38 +169,63 @@ def _proxy_label() -> str:
     return ",".join(seen) if seen else "off"
 
 
+def resolve_addresses(host, port=443):
+    """getaddrinfo with AF_UNSPEC, IPv4 addresses first.
+
+    The family argument has to be AF_UNSPEC. SOCK_STREAM in that slot is
+    AF_UNIX (both are 1) and macOS then raises gaierror Errno 5,
+    "ai_family not supported", before any packet is sent.
+    """
+    if isinstance(host, str) and host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    return sorted(infos, key=lambda item: item[0] != socket.AF_INET)
+
+
 def _families(host, port=443) -> str:
     """Address-family counts for host. No addresses are logged."""
-    infos = socket.getaddrinfo(host, port, socket.SOCK_STREAM)
+    infos = resolve_addresses(host, port)
     v4 = sum(1 for item in infos if item[0] == socket.AF_INET)
     v6 = sum(1 for item in infos if item[0] == socket.AF_INET6)
     return f"ipv4={v4},ipv6={v6}"
+
+
+def _family_rejected(exc) -> bool:
+    if "ai_family" in str(exc).lower() or "address family" in str(exc).lower():
+        return True
+    err = getattr(exc, "errno", None)
+    for name in ("EAI_FAMILY", "EAI_ADDRFAMILY", "EAFNOSUPPORT", "EPROTONOSUPPORT", "EPFNOSUPPORT"):
+        val = getattr(errno, name, None)
+        if val is None:
+            val = getattr(socket, name, None)
+        if val is not None and err == val:
+            return True
+    return False
 
 
 def _install_ipv4_first():
     """Try IPv4 before IPv6 for urllib3 only.
 
     urllib3 walks getaddrinfo order and gives each address the full connect
-    timeout. A blackholed IPv6 route (common when a shell has a proxy and a
-    LaunchAgent does not) can spend the whole turn before the first header.
-    The TLS hostname stays the URL host; only the attempt order changes.
+    timeout. A blackholed IPv6 route can spend the whole turn before the
+    first header. If this resolver is rejected, the original urllib3
+    connector runs instead. The TLS hostname stays the URL host.
     """
     import urllib3.util.connection as cn
     if getattr(cn, "_womble_ipv4_first", False):
         return
+    orig = cn.create_connection
 
     def create_connection(address, timeout=cn._DEFAULT_TIMEOUT, source_address=None, socket_options=None):
         host, port = address
-        if isinstance(host, str) and host.startswith("["):
-            host = host.strip("[]")
         try:
-            host.encode("idna")
-        except UnicodeError:
-            raise cn.LocationParseError(f"'{host}', label empty or too long") from None
-        family = cn.allowed_gai_family()
-        infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
-        infos.sort(key=lambda item: item[0] != socket.AF_INET)
+            infos = resolve_addresses(host, port)
+        except (socket.gaierror, UnicodeError, OSError):
+            return orig(address, timeout, source_address, socket_options)
+        if not infos:
+            return orig(address, timeout, source_address, socket_options)
         err = None
+        rejected = 0
         for af, socktype, proto, _canon, sa in infos:
             sock = None
             try:
@@ -216,9 +241,13 @@ def _install_ipv4_first():
                 err = exc
                 if sock is not None:
                     sock.close()
-        if err is not None:
-            raise err
-        raise OSError("getaddrinfo returns an empty list")
+                if _family_rejected(exc):
+                    rejected += 1
+                else:
+                    rejected = -1
+        if rejected == len(infos) or err is None:
+            return orig(address, timeout, source_address, socket_options)
+        raise err
 
     cn.create_connection = create_connection
     cn._womble_ipv4_first = True
@@ -330,9 +359,11 @@ async def default_transport(payload: dict, key: str, timeout: float):
                 trace.mark("dns")
                 try:
                     trace.dns = _families(_API_HOST)
-                except Exception:
-                    trace.mark("dns-error")
-                    raise
+                except Exception as exc:
+                    # The count is diagnostic. A lookup failure here must not
+                    # skip the POST; create_connection resolves again and
+                    # falls back to urllib3 if this resolver is rejected.
+                    trace.dns = type(exc).__name__
                 trace.mark("connect")
             with requests.post(
                 URL,
