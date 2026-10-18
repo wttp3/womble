@@ -1,0 +1,6 @@
+:root{--womble-cream:#F6F0E5;--womble-charcoal:#242321;--womble-surface:#34312E;--womble-tan:#D7A15E;--womble-pink:#E97488;--womble-sage:#87977C;--womble-text-dark:#F6F0E5;--womble-text-light:#242321;}
+
+.womble-head{transform-origin:50% 60%;transition:transform 280ms ease-out;}
+[data-voice-state="listening"] .womble-head{transform:translateY(3%) rotate(15deg);}
+@media(prefers-reduced-motion:reduce){.womble-head{transition:none;}[data-voice-state="listening"] .womble-head{transform:none;}}
+/* Apply this transform to the NEUTRAL head only; never rotate the already tilted pose. */
