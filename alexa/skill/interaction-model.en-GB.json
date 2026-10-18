@@ -92,6 +92,33 @@
           ]
         },
         {
+          "name": "QuestionIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "what {query}",
+            "what's {query}",
+            "what is {query}",
+            "what about {query}",
+            "how {query}",
+            "how do I {query}",
+            "why {query}",
+            "when {query}",
+            "who {query}",
+            "is {query}",
+            "can {query}",
+            "should {query}",
+            "research {query}",
+            "tell me about {query}",
+            "tell me {query}",
+            "and {query}"
+          ]
+        },
+        {
           "name": "AMAZON.HelpIntent",
           "samples": []
         },
@@ -105,6 +132,14 @@
         },
         {
           "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.YesIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NoIntent",
           "samples": []
         },
         {

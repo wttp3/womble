@@ -91,6 +91,55 @@ class Seen:
         try: self.path.write_text(json.dumps(list(self.d)))
         except Exception as e: log.warning("seen save failed: %s", e)
 
+    def discard(self, k):
+        if k not in self.d:
+            return
+        self.d.pop(k, None)
+        try: self.path.write_text(json.dumps(list(self.d)))
+        except Exception as e: log.warning("seen save failed: %s", e)
+
+def session_key(session_id, room) -> str:
+    """Brain memory key. The live session id wins; otherwise the Echo's room."""
+    if session_id:
+        return f"alexa:{session_id}"
+    return f"alexa:{room}"
+
+
+def claim_recent(recent: dict, text: str, now: float | None = None) -> bool:
+    """True if this wording should be handled. Same words inside the window are one request."""
+    key = " ".join((text or "").lower().strip(" .!?").split())
+    if not key:
+        return False
+    now = now or time.time()
+    for k, t in list(recent.items()):
+        if now - t >= XDEV_DEDUPE_S:
+            recent.pop(k, None)
+    if key in recent:
+        log.info("alexa job skipped: same words within %ss (likely two Echos heard it)", XDEV_DEDUPE_S)
+        return False
+    recent[key] = now
+    return True
+
+
+async def show_alexa_result(disp, push_card, job, res, dev, new, room):
+    """Frame card with the room chip, the same events AlexaPuller already emits."""
+    text = (job.get("text") or "").strip()
+    chip = {"source": "alexa", "room": room, "device": dev.get("name", room)}
+    rid = job.get("requestId") or job.get("id")
+    if new:
+        await disp.emit("toast", {"text": f"New Echo ({room}): rename it in alexa_devices.json", "kind": "info"})
+    await disp.emit("voice.heard", {"text": text, **chip}, corr=rid)
+    card = dict(res["card"])
+    if card.get("type") == "text":   # reply cards show the source label; list cards toast as usual
+        await disp.emit("reply", {"title": card.get("title", ""), "body": card.get("body", ""),
+                                   "source": dev.get("name", room), **{k: v for k, v in chip.items() if k != "source"}},
+                        corr=rid)
+    else:
+        await push_card(card)
+    log.info("alexa job done: room=%s category=%s", room, res.get("category"))
+    return room
+
+
 def poll_interval(last_msg_ts: float, now: float | None = None) -> float:
     now = now or time.time()
     hour = time.localtime(now).tm_hour
@@ -98,9 +147,11 @@ def poll_interval(last_msg_ts: float, now: float | None = None) -> float:
     return ACTIVE_S if now - last_msg_ts < IDLE_AFTER_S else IDLE_S
 
 class AlexaPuller:
-    def __init__(self, disp, route, push_card, devices: Devices | None = None, seen: Seen | None = None):
+    def __init__(self, disp, route, push_card, devices: Devices | None = None, seen: Seen | None = None,
+                 recent: dict | None = None):
         self.disp, self.route, self.push_card = disp, route, push_card
         self.devices, self.seen = devices or Devices(), seen or Seen()
+        self._recent = recent if recent is not None else {}
         self.task = None; self.state = "disabled"; self.last_msg = 0.0; self.missed: list[str] = []
 
     def enabled(self) -> bool:
@@ -186,29 +237,15 @@ class AlexaPuller:
     async def handle_job(self, job: dict):
         text = (job.get("text") or "").strip()
         if not text: return
-        key = " ".join(text.lower().strip(" .!?").split())
-        now = time.time(); recent = getattr(self, "_recent", {})
-        self._recent = {k: t for k, t in recent.items() if now - t < XDEV_DEDUPE_S}
-        if key in self._recent:
-            log.info("alexa job skipped: same words within %ss (likely two Echos heard it)", XDEV_DEDUPE_S); return
-        self._recent[key] = now
+        if not claim_recent(self._recent, text):
+            return
         dev, new = self.devices.lookup(job.get("deviceId"))
         room = dev.get("room", "Echo")
-        chip = {"source": "alexa", "room": room, "device": dev.get("name", room)}
-        if new:
-            await self.disp.emit("toast", {"text": f"New Echo ({room}): rename it in alexa_devices.json", "kind": "info"})
-        await self.disp.emit("voice.heard", {"text": text, **chip}, corr=job.get("requestId"))
-        res = _call_route(self.route, text, source=f"alexa:{room}", session=job.get("sessionId") or f"alexa:{room}")
+        res = _call_route(self.route, text, source=f"alexa:{room}",
+                          session=session_key(job.get("sessionId"), room))
         if asyncio.iscoroutine(res):
             res = await res
-        card = dict(res["card"])
-        if card.get("type") == "text":   # reply cards show the source label; list cards toast as usual
-            await self.disp.emit("reply", {"title": card.get("title", ""), "body": card.get("body", ""),
-                                           "source": dev.get("name", room), **{k: v for k, v in chip.items() if k != "source"}},
-                                 corr=job.get("requestId"))
-        else:
-            await self.push_card(card)
-        log.info("alexa job done: room=%s category=%s", room, res.get("category"))
+        await show_alexa_result(self.disp, self.push_card, job, res, dev, new, room)
 
     async def _flush_missed(self):
         n = len(self.missed); body = "\n".join(f"• {t}" for t in self.missed[:10])
