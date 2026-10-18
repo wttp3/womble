@@ -64,5 +64,7 @@ def route(text: str, store, recording_active: bool = False) -> dict:
         items = store.show(lst)
         return {"category": "list.show", "speech": f"{len(items)} items on {lst}.",
                 "card": {"type": "list", "title": lst.title(), "items": items}}
+    # hub.route() sends this fallback to the brain. The line stays so this module
+    # stays sync and the regex tests still see the historical phrase.
     return {"category": "fallback", "speech": "Sorry, I can only do lists for now.",
             "card": {"type": "text", "title": "Heard", "body": t}}

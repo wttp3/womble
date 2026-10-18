@@ -1,6 +1,7 @@
 """petit voice hub, slice 1.
 BOX-3 (ESPHome voice_assistant over native API) -> mlx-whisper -> rule router
--> local JSON list -> TTS (Kokoro/mlx-audio, fallback macOS `say`) -> BOX-3 media player
+-> local JSON list, or the brain when the router falls through
+-> TTS (Kokoro/mlx-audio, fallback macOS `say`) -> BOX-3 media player
 + WebSocket card to display page.  Secrets come from the environment only.
 
 Env: BOX3_HOST (required, BOX-3 address), BOX3_NOISE_PSK (api encryption key), HUB_HOST_IP (petit LAN IP
@@ -18,6 +19,7 @@ from recorder import Recorder, make_beep
 from display import Display, allowed_ws_origins, http_hosts, supervise   # Womble #1 display: events, weather, taps (see DISPLAY.md)
 from lists import ListStore
 from router import route as route_text
+from brain.core import Brain
 
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"; DATA.mkdir(exist_ok=True)
@@ -74,30 +76,54 @@ LISTS = ListStore(LIST_FILE)
 def load_lists():
     return LISTS.load()
 
-def route(text: str) -> dict:
-    return route_text(text, LISTS, REC.active)
+async def route(text: str, *, source: str = "box3-kitchen", session: str | None = None, on_sentence=None):
+    """Regex fast path, then the brain. List and record hits never call xAI."""
+    res = route_text(text, LISTS, REC.active)
+    if res["category"] != "fallback":
+        return res
+    if not (text or "").strip():
+        return {"category": "empty", "speech": "", "card": {"type": "text", "title": "", "body": ""}}
+    reply = await BRAIN.handle(text, source=source, session=session or source, on_sentence=on_sentence)
+    card = reply.card or {"type": "text", "title": "Womble", "body": reply.speech}
+    return {"category": reply.category, "speech": reply.speech, "card": card,
+            "end_session": reply.end_session, "reprompt": reply.reprompt,
+            "llm_ttft_ms": reply.llm_ttft_ms, "llm_total_ms": reply.llm_total_ms}
 
 # ---------- TTS ----------
 _kokoro = None
-def tts(text: str) -> Path:
-    out = TTS_DIR / f"{uuid.uuid4().hex}.wav"
+def synthesize(text: str):
+    """Float32 mono audio at 48 kHz, plus the sample rate. Sets tts.last_engine."""
     if TTS_ENGINE == "kokoro":
         try:
             global _kokoro
             from mlx_audio.tts.utils import load_model   # API: verify against installed mlx-audio
             _kokoro = _kokoro or load_model("prince-canuma/Kokoro-82M")
             chunks = [np.asarray(r.audio).reshape(-1) for r in _kokoro.generate(text=text, voice="af_heart", speed=1.0)]
-            audio = np.concatenate(chunks); sr = 24000
-            _write_wav(out, _resample(audio, sr, 48000), 48000); tts.last_engine = "kokoro"; return out
+            audio = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
+            tts.last_engine = "kokoro"
+            return _resample(audio, 24000, 48000), 48000
         except Exception as e:
             log.warning("kokoro failed (%s), falling back to say", e)
     tts.last_engine = "say"
-    aiff = out.with_suffix(".aiff")
+    aiff = TTS_DIR / f"{uuid.uuid4().hex}.aiff"
     subprocess.run(["say", "-o", str(aiff), text], check=True)
     import soundfile as sf
     audio, sr = sf.read(str(aiff), dtype="float32", always_2d=True)
-    _write_wav(out, _resample(audio[:, 0], sr, 48000), 48000)
-    aiff.unlink(missing_ok=True); return out
+    aiff.unlink(missing_ok=True)
+    return _resample(audio[:, 0], sr, 48000), 48000
+
+def tts(text: str) -> Path:
+    audio, sr = synthesize(text)
+    out = TTS_DIR / f"{uuid.uuid4().hex}.wav"
+    _write_wav(out, audio, sr)
+    return out
+
+def tts_parts(parts, sr=48000) -> Path:
+    chunks = [np.asarray(p, dtype=np.float32).reshape(-1) for p in parts if len(p)]
+    audio = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
+    out = TTS_DIR / f"{uuid.uuid4().hex}.wav"
+    _write_wav(out, audio, sr)
+    return out
 
 def _write_wav(p, audio, sr):
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
@@ -118,6 +144,7 @@ def _resample(audio, sr, target):
 
 # ---------- display ----------
 disp = Display(lists_loader=load_lists)
+BRAIN = Brain(LISTS, disp)
 disp.allowed_origins = allowed_ws_origins(HUB_IP, HUB_PORT)
 SAMPLES = DATA / "womble-samples"; SAMPLES.mkdir(exist_ok=True)
 REC = Recorder(SAMPLES, disp, tts=lambda t: tts(t), transcribe=lambda pcm: transcribe(pcm),
@@ -125,6 +152,38 @@ REC = Recorder(SAMPLES, disp, tts=lambda t: tts(t), transcribe=lambda pcm: trans
 disp.tap_hooks.append(REC.on_tap); disp.snapshot_extra["record"] = REC.counts
 async def push_card(card: dict):       # kept for slice-1 callers; translated to list.updated / reply events
     await disp.push_card(card)
+
+async def _speak(speech: str, spoken: dict) -> Path:
+    """Play streamed sentence audio when it matches the final line, else one TTS call.
+
+    The BOX-3 fetches a single WAV URL, so the first sentence is synthesised while the
+    model is still talking and the pieces are joined before TTS_END. Kokoro runs one
+    sentence at a time.
+    """
+    first = spoken.get("first")
+    heard = " ".join(spoken.get("text") or [])
+    if first is None or heard != speech:
+        if first is not None:
+            first.cancel()
+            try:
+                await first
+            except asyncio.CancelledError:
+                if not first.cancelled():
+                    raise
+            except Exception:
+                pass
+        return await asyncio.to_thread(tts, speech)
+    try:
+        audio, sr = await first
+        parts = [audio]
+        rest = spoken.get("rest") or []
+        if rest:
+            more, sr = await asyncio.to_thread(synthesize, " ".join(rest))
+            parts.append(more)
+        return await asyncio.to_thread(tts_parts, parts, sr)
+    except Exception as e:
+        log.warning("sentence tts failed (%s); speaking the full line", type(e).__name__)
+        return await asyncio.to_thread(tts, speech)
 
 # ---------- voice session ----------
 SORRY = "Sorry, something went wrong."
@@ -137,7 +196,9 @@ class Session:
     # ---- adaptive energy VAD (all in samples, independent of wall clock) ----
     SR = 16000
     MIN_SPEECH_S = 1.0        # keep recording at least this long after speech starts
-    TRAIL_SIL_S = 0.65         # trailing silence that ends the utterance
+    # C1: 0.65 s ended a turn on a mid-sentence pause (the word's decay ate ~0.15 s of it).
+    # 1.2 s keeps that breath. VAD_TRAIL_SIL_S=0.65 restores the old cutoff.
+    TRAIL_SIL_S = float(os.environ.get("VAD_TRAIL_SIL_S", "1.2"))
     NO_SPEECH_S = 5.0         # give up if nobody speaks
     MAX_S = 10.0
     noise_floor = 30.0       # carried across sessions, updated from quiet chunks
@@ -215,27 +276,43 @@ class Session:
             c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_VAD_END, None)
             text = await asyncio.to_thread(transcribe, bytes(self.buf)); t["stt"] = time.perf_counter()
             c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_END, {"text": text})
-            if not text:
-                await disp.emit("voice.cancel", {"reason": getattr(self, "end_reason", "no_speech")})
-            else:
-                await disp.emit("voice.heard", {"text": text})
             try: REC.save_passive(bytes(self.buf), t.get("wake_word"), text)   # passive wake-word capture (post-wake audio only)
             except Exception as e: log.warning("passive save failed: %s", e)
-            res = route(text); t["route"] = time.perf_counter()
-            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_START, None)
-            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_END, {"conversation_id": ""})
-            await push_card(res["card"]); t["display"] = time.perf_counter()
-            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_START, {"text": res["speech"]})
-            wav = await asyncio.to_thread(tts, res["speech"]); t["tts"] = time.perf_counter()
-            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_END, {"url": f"http://{HUB_IP}:{HUB_PORT}/tts/{wav.name}"})
-            tts_sent = True
-            c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)
-            pipeline_done = True
-            if res["category"] == "record.start":
-                with wave.open(str(wav)) as wf: dur = wf.getnframes() / wf.getframerate()
-                await REC.start(res["speaker"], delay_s=dur + 1.5, only=res.get("only"))
-            elif res["category"] == "record.stop":
-                await REC.stop("voice")
+            if not (text or "").strip():
+                # An empty transcript after a wake ends quietly. No fallback line.
+                await disp.emit("voice.cancel", {"reason": getattr(self, "end_reason", "no_speech")})
+                res = {"category": "empty", "speech": "", "card": {"type": "text", "title": "", "body": ""}}
+                c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)
+                pipeline_done = True
+            else:
+                await disp.emit("voice.heard", {"text": text})
+                spoken = {"first": None, "rest": [], "text": []}
+                def on_sentence(sentence: str):
+                    spoken["text"].append(sentence)
+                    if spoken["first"] is None:
+                        spoken["first"] = asyncio.create_task(asyncio.to_thread(synthesize, sentence))
+                    else:
+                        spoken["rest"].append(sentence)
+                res = await route(text, on_sentence=on_sentence); t["route"] = time.perf_counter()
+                speech = res.get("speech") or ""
+                if not speech:
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)
+                    pipeline_done = True
+                else:
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_START, None)
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_INTENT_END, {"conversation_id": ""})
+                    await push_card(res["card"]); t["display"] = time.perf_counter()
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_START, {"text": speech})
+                    wav = await _speak(speech, spoken); t["tts"] = time.perf_counter()
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_TTS_END, {"url": f"http://{HUB_IP}:{HUB_PORT}/tts/{wav.name}"})
+                    tts_sent = True
+                    c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)
+                    pipeline_done = True
+                    if res["category"] == "record.start":
+                        with wave.open(str(wav)) as wf: dur = wf.getnframes() / wf.getframerate()
+                        await REC.start(res["speaker"], delay_s=dur + 1.5, only=res.get("only"))
+                    elif res["category"] == "record.stop":
+                        await REC.stop("voice")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -265,6 +342,8 @@ class Session:
                    **{f"{k}_ms": round((t[k] - w) * 1000) for k in ("eos", "stt", "route", "display", "tts") if k in t}}
             if "stt" in t and "eos" in t: rec["stt_only_ms"] = round((t["stt"] - t["eos"]) * 1000)
             if "tts" in t and "display" in t: rec["tts_only_ms"] = round((t["tts"] - t["display"]) * 1000)
+            for k in ("llm_ttft_ms", "llm_total_ms"):
+                if k in res: rec[k] = res[k]
             if err is not None: rec["error"] = type(err).__name__
             with TIMING_LOG.open("a") as f: f.write(json.dumps(rec) + "\n")
             _write_wav16(DATA / "last_utterance.wav", bytes(self.buf))
