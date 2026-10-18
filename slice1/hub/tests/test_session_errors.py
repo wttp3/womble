@@ -4,6 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("BOX3_NOISE_PSK", "unused")
 os.environ.setdefault("HUB_HOST_IP", "127.0.0.1")
+os.environ.setdefault("BOX3_HOST", "127.0.0.1")
 os.environ.setdefault("TTS_ENGINE", "say")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 mw = types.ModuleType("mlx_whisper")

@@ -20,11 +20,11 @@ Womble #1 is Andrew's home voice assistant. Voice comes in from a BOX-3 or from 
 
 ```mermaid
 flowchart LR
-  subgraph Home LAN 192.168.0.x
-    BOX3["ESP32-S3-BOX-3\n192.168.0.90 (Wi-Fi)\nESPHome + micro_wake_word"]
-    HUB["petit hub (hub.py)\n192.168.0.70:8080\nlaunchd com.andrew.box3hub"]
-    FRAME["Kitchen frame PF1007L\n192.168.0.160\nFully Kiosk → http://192.168.0.70:8080/"]
-    PRN["BlueTooth Printer 58mm\n5A:4A:5D:FC:C9:4D"]
+  subgraph Home LAN
+    BOX3["ESP32-S3-BOX-3\n<box3-ip> (Wi-Fi)\nESPHome + micro_wake_word"]
+    HUB["petit hub (hub.py)\n<hub-ip>:8080\nlaunchd com.andrew.box3hub"]
+    FRAME["Kitchen frame PF1007L\n<frame-ip>\nFully Kiosk → http://<hub-ip>:8080/"]
+    PRN["BlueTooth Printer 58mm\n<printer-mac>"]
   end
   ECHO["Echos: white alexa / blue kitchen / black alexa (+Dev console)"]
   ASK["Alexa skill 'Frida' (en-GB, dev)"]
@@ -33,7 +33,7 @@ flowchart LR
   XAI["xAI STT api.x.ai/v1/stt"]
   OM["Open-Meteo weather"]
   BOX3 -- "native API :6053 (Noise-encrypted)\n16 kHz PCM, VA events" --> HUB
-  HUB -- "TTS WAV URL http://192.168.0.70:8080/tts/…" --> BOX3
+  HUB -- "TTS WAV URL http://<hub-ip>:8080/tts/…" --> BOX3
   HUB <-- "WS /ws events, GET /" --> FRAME
   HUB -- "HTTPS POST (key womble-xai)" --> XAI
   HUB -- "HTTPS GET" --> OM
@@ -49,7 +49,7 @@ flowchart LR
 1. **BOX-3 voice.** On-device micro_wake_word fires and calls `voice_assistant.start`. Audio streams over the ESPHome native API to `hub.py` (aioesphomeapi `subscribe_voice_assistant`). The adaptive energy VAD in `Session.feed` ends the utterance. `transcribe()` tries xAI STT and falls back to mlx-whisper. Then `route()` runs, `data/lists.json` is updated, the frame gets events (`voice.listening`, then `voice.heard`/`voice.cancel`, then `list.updated`/`reply`), and Kokoro TTS writes a WAV to `data/tts/`. The hub sends `TTS_END {url}` and the BOX-3 media player fetches and plays it. Timing is appended to `data/timing.jsonl`, post-wake audio is saved passively, and `data/last_utterance.wav` is overwritten.
 2. **Alexa / Frida.** "Alexa, ask Frida to add milk" goes to the Worker. The Worker verifies the signature and cert chain, checks a ±150 s timestamp window and the applicationId, then calls `QUEUE.send(job)` and Alexa says "On it." The hub's `AlexaPuller` pulls the queue and drops duplicate requestIds (`data/alexa_seen.json`). Jobs older than 10 min are reported as "missed" and not run. The same words within 10 s from any Echo are skipped. The device is mapped to a room (`data/alexa_devices.json`), the frame gets `voice.heard` with a room chip, and the text goes through the same `route()`. The result is shown on the frame. **Nothing is spoken back through the Echo** except the Worker's "On it."
 3. **Frame UI.** Fully Kiosk loads `GET /` (`static/display.html`) and opens `WS /ws`. The hub sends `snapshot` on connect, then events. The page sends `hello` and `tap` messages back. Local tools and tests can inject events with `POST /api/event`.
-4. **Printing (manual only).** A slip is built as an ESC/POS byte file (latest: `slice1/hub/print/job.bin`) and sent with `~/box3-voice/tools/btprint 5A:4A:5D:FC:C9:4D <file> [channel]` over IOBluetooth RFCOMM. Nothing in the hub prints by itself yet; an agent builds and sends the slip on request. Format in §2.7.
+4. **Printing (manual only).** A slip is built as an ESC/POS byte file (latest: `slice1/hub/print/job.bin`) and sent with `~/box3-voice/tools/btprint "$PRINTER_MAC" <file> [channel]` (`PRINTER_MAC=<printer-mac>` in `local.env`) over IOBluetooth RFCOMM. Nothing in the hub prints by itself yet; an agent builds and sends the slip on request. Format in §2.7.
 
 ## 2. Components
 
@@ -63,17 +63,17 @@ flowchart LR
   * `display.py`
   * `recorder.py`: wake-word sample recorder.
   * `smoke.py`, `replay_vad.py`, `test_session.py`: dev helpers.
-  * `requirements.txt`: aioesphomeapi≥30, mlx-whisper, mlx-audio, misaki\[en\], numpy, soundfile, aiohttp. **Note:** `stt_xai.py` imports `requests`, which is not listed. It is presumably installed transitively **\[unverified\]**.
+  * `requirements.txt`: aioesphomeapi>=46,<47, mlx-whisper, mlx-audio, misaki\[en\], numpy, soundfile, aiohttp, requests (used by `stt_xai.py`).
   * `.venv/`: Python 3.12, created with uv.
   * Old `*.bak-*` copies sit next to the files they replaced. They are not used.
-* **Startup chain:** launchd `~/Library/LaunchAgents/com.andrew.box3hub.plist` (RunAtLoad, KeepAlive, ThrottleInterval 10, WorkingDirectory `slice1`, stdout and stderr go to `slice1/hub.log`). That runs `hub/launch.sh` (zsh, sets `HUB_HOST_IP=192.168.0.70` and `PYTHONUNBUFFERED=1`, runs `caffeinate -i -s ./run.sh`). `run.sh` exports `BOX3_NOISE_PSK` from the Keychain (`box3-api-key`/`hub`), plus `WHISPER_MODEL` (default `mlx-community/whisper-large-v3-turbo`) and `WHISPER_LANG` (default `en`), then runs `.venv/bin/python hub/hub.py`.
+* **Startup chain:** launchd `~/Library/LaunchAgents/com.andrew.box3hub.plist` (RunAtLoad, KeepAlive, ThrottleInterval 10, WorkingDirectory `slice1`, stdout and stderr go to `slice1/hub.log`). That runs `hub/launch.sh` (zsh, sources the untracked `~/box3-voice/local.env` if present (home-network and Cloudflare values; template `local.env.example`), sets `PYTHONUNBUFFERED=1`, runs `caffeinate -i -s ./run.sh`). `run.sh` also sources `local.env`, exports `BOX3_NOISE_PSK` from the Keychain (`box3-api-key`/`hub`), plus `WHISPER_MODEL` (default `mlx-community/whisper-large-v3-turbo`) and `WHISPER_LANG` (default `en`), then runs `.venv/bin/python hub/hub.py`.
 * **Env vars:**
 
 | Var | Default | Meaning |
 | -- | -- | -- |
-| BOX3_HOST | 192.168.0.90 | BOX-3 address |
+| BOX3_HOST | (required, local.env) | BOX-3 address (`<box3-ip>`) |
 | BOX3_NOISE_PSK | (required) | API encryption key, from Keychain |
-| HUB_HOST_IP | (required) | IP the BOX-3 uses to fetch TTS |
+| HUB_HOST_IP | (local.env; run.sh falls back to en0/en1) | IP the BOX-3 uses to fetch TTS (`<hub-ip>`) |
 | HUB_PORT | 8080 | HTTP port |
 | WHISPER_MODEL / WHISPER_LANG | turbo / en | local STT |
 | STT_ENGINE | xai | `whisper` forces local STT |
@@ -81,7 +81,8 @@ flowchart LR
 | TTS_ENGINE | kokoro | `say` forces macOS say |
 | ALEXA_PULL | 1 | `0` disables the puller |
 | ALEXA_POLL_S / ALEXA_IDLE_POLL_S / ALEXA_NIGHT_POLL_S | 2 / 5 / 15 | poll interval: active (message in the last 10 min) / idle / 23:00–07:00 |
-| ALEXA_CF_ACCOUNT, ALEXA_QUEUE_ID, ALEXA_KC_ACCOUNT | built in | CF account, queue df7fc532…, Keychain account `decoy` |
+| CF_ACCOUNT_ID, CF_QUEUE_ID | (required, local.env; no default) | CF account `<acct>` and queue `<queue-id>`. Old names ALEXA_CF_ACCOUNT / ALEXA_QUEUE_ID still work. If unset the puller logs an error and stays off. |
+| ALEXA_KC_ACCOUNT | `decoy` | Keychain account |
 | DISPLAY_NAME | Womble #1 |  |
 | WEATHER_LAT / WEATHER_LON | 40.4168 / -3.7038 (Madrid) |  |
 | DISPLAY_PRINTER | 0 | feature flag in the snapshot |
@@ -126,7 +127,7 @@ flowchart LR
   * `test_recorder.py`: fake device.
   * `fake_driver.py`: needs playwright + Chromium and takes display screenshots.
   * Also in `data/`: `live_stt_test.py` (live, uses the key) and `smoke.jsonl`.
-* **Known issues:** `requests` is not in requirements. TTS files pile up. `lists.json` writes are not atomic. The BOX-3 log shows "display took a long time" warnings (harmless). Any Echo reply other than "On it." would need the progressive response API **\[not built\]**.
+* **Known issues:** TTS files pile up. (`lists.json` writes are atomic: temp file, fsync, `os.replace`.) The BOX-3 log shows "display took a long time" warnings (harmless). Any Echo reply other than "On it." would need the progressive response API **\[not built\]**.
 * **Boundary:** the hub owns the lists and the router. Home Assistant and announce-bridge work belong to other bots.
 
 ### 2.2 Display service and frame page (`slice1/hub/display.py`, `static/display.html`, spec `DISPLAY.md`)
@@ -171,7 +172,7 @@ flowchart LR
 
 * `box3-hub.yaml` is the active config. `box3-hub-nodisplay.yaml` is a variant without the LCD. Also present: `box3-hub.yaml.bak-202610151628` and `../backup/official-esp32-s3-box-3.yaml` (the official reference YAML; this is **not** a flash image).
 * **Node:** name `grok-box3-dash`, friendly name "Kitchen BOX-3", board esp32s3box, `min_version` 2026.9.0. ESPHome CLI 2026.9.0 is installed via `uv tool`.
-* **Network:** Wi-Fi with a static IP of 192.168.0.90. The API is encrypted (`!secret api_key`) and OTA has a password (`!secret ota_password`).
+* **Network:** Wi-Fi with a static IP (`<box3-ip>`), set through `!secret box3_static_ip` / `box3_gateway` / `box3_subnet` / `box3_dns` in the untracked `secrets.yaml` (template `secrets.example.yaml`). The API is encrypted (`!secret api_key`) and OTA has a password (`!secret ota_password`).
 * **Wake words** (`micro_wake_word`, id `mww`):
   * `okay_nabu`
   * custom `models/womble.json` + `womble.tflite`: microWakeWord v2, cutoff 0.89, author Andrew Webster
@@ -194,7 +195,7 @@ flowchart LR
   * `cloudflare.config.ts`: worker `womble-alexa`, compat date 2026-09-30, workersDev, observability **off** (spoken text is never logged), bindings `QUEUE` (queue womble-alexa) and secret `ALEXA_SKILL_ID`.
   * `skill/interaction-model.en-GB.json`
   * `test/test.mjs`
-* **Endpoint:** `POST https://womble-alexa.andrew-ca2.workers.dev/` or `/alexa`. Any other method or path returns 404. A bad or unconfigured request returns 400 with an `x-reason` header (skill id not configured / signature / json / timestamp / application id).
+* **Endpoint:** `POST <worker-url>/` or `/alexa` (the workers.dev URL `cf deploy` prints). Any other method or path returns 404. A bad or unconfigured request returns 400 with an `x-reason` header (skill id not configured / signature / json / timestamp / application id).
 * **Interaction model** (invocation `frida`):
   * AddIntent, FindIntent, SaveIntent and RememberIntent each send text prefixed with their verb (add / find / save / remember).
   * CaptureIntent sends the raw query.
@@ -204,13 +205,13 @@ flowchart LR
 * **Queue settings** (from alexa/README): HTTP pull consumer, batch 10, visibility 60 s, max retries 3, retry delay 5 s.
 * **Test:** `cd ~/box3-voice/alexa && export PATH=~/.local/node/bin:$PATH && node test/test.mjs`.
 * **Deploy:** `cf deploy`. Node ≥ 22.18 is required.
-* **Skill:** "Frida", en-GB, dev stage, skill id `amzn1.ask.skill.b5fde062-3f52-4178-821c-bfae9f754985`.
+* **Skill:** "Frida", en-GB, dev stage, skill id `<skill-id>` (kept only in the Worker secret `ALEXA_SKILL_ID` and the Alexa developer console).
   * `alexa/README` still says `ALEXA_SKILL_ID` is the placeholder `unset`.
   * `data/alexa_devices.json` has 4 devices seen since 2026-10-16, so the secret has evidently been set since then. That README line is stale.
 
 ### 2.6 Alexa puller (`slice1/hub/alexa_pull.py`)
 
-* **API:** `POST https://api.cloudflare.com/client/v4/accounts/<acct>/queues/df7fc532644e4b1493fd5c4510718f54/messages/pull` with `{batch_size:10, visibility_timeout_ms:60000}`, then `/ack` with `{acks, retries:[{lease_id, delay_seconds:5}]}`.
+* **API:** `POST https://api.cloudflare.com/client/v4/accounts/<acct>/queues/<queue-id>/messages/pull` with `{batch_size:10, visibility_timeout_ms:60000}`, then `/ack` with `{acks, retries:[{lease_id, delay_seconds:5}]}`.
 * **Errors:** a 401 or 403 stops the puller until restart and toasts "Alexa link: token problem". A 429 or 5xx triggers exponential backoff from 2 to 60 s.
 * **Enabled when** `ALEXA_PULL!=0` **and** the Keychain item `womble-cf-queue` exists. The existence check does not read the secret.
 * **Check without revealing secrets:** `.venv/bin/python alexa_pull.py --status`.
@@ -240,11 +241,11 @@ flowchart LR
 
 ### 2.8 Kitchen frame (device)
 
-* PF1007L "AEEZO", Android 6.0.1 (MOB30R), WebView/Chrome 106, rooted, Fully Kiosk PLUS. Installed in the kitchen (2026-10-17). IP 192.168.0.160, reserved in the router by MAC. Start URL `http://192.168.0.70:8080/`.
-* **MAC:** the Wi-Fi chip has no fixed MAC and it can change on reboot (seen 88:00:33:77:e4:f5, earlier …:b5:4f and …:37:de). The router reservation is tied to 88:00:33:77:e4:f5; if the frame ever gets a different IP, update the reservation.
-* **adb over Wi-Fi:** `192.168.0.160:5555`, made persistent with `persist.adb.tcp.port=5555`, so it survives reboots. The frame is also on a USB cable to petit (serial `87381d37b87700000000`) as a backup way in.
+* PF1007L "AEEZO", Android 6.0.1 (MOB30R), WebView/Chrome 106, rooted, Fully Kiosk PLUS. Installed in the kitchen (2026-10-17). IP `<frame-ip>`, reserved in the router by MAC. Start URL `http://<hub-ip>:8080/`.
+* **MAC:** the Wi-Fi chip has no fixed MAC and it can change on reboot (the current one is `<frame-wifi-mac>`; it has changed at least twice). The router reservation is tied to `<frame-wifi-mac>`; if the frame ever gets a different IP, update the reservation.
+* **adb over Wi-Fi:** `<frame-ip>:5555`, made persistent with `persist.adb.tcp.port=5555`, so it survives reboots. The frame is also on a USB cable to petit (serial `<frame-adb-serial>`) as a backup way in.
 * **adb binary:** `/Users/decoy/platform-tools/adb`. Always run it with `ADB_LIBUSB=1`. After a power cut the default macOS USB backend hung while the adb server was starting, which stopped the watchdog; the libusb backend fixed it.
-* **Fully watchdog:** the vendor firmware blocks Fully's start-on-boot and re-enables the stock launcher on every boot, so Fully can't stay the home app on its own. launchd `com.andrew.fullywatch` runs `~/box3-voice/frame/fully_watch.sh`, which reconnects adb if needed and, every 20 s, starts `de.ozerov.fully/.MainActivity` whenever the focused window is the Android launcher (`nexuslauncher`). After a boot or a home press, Fully is back in front within about 20–25 s. Log: `frame/fully_watch.log`. Backups: `fully_watch.sh.bak-usb` (old USB version), `.bak-20261017-libusb`.
+* **Fully watchdog:** the vendor firmware blocks Fully's start-on-boot and re-enables the stock launcher on every boot, so Fully can't stay the home app on its own. launchd `com.andrew.fullywatch` runs `~/box3-voice/frame/fully_watch.sh`, which sources `FRAME_HOST` (and optional `FRAME_ADB_PORT`) from `local.env`, reconnects adb if needed and, every 20 s, starts `de.ozerov.fully/.MainActivity` whenever the focused window is the Android launcher (`nexuslauncher`). After a boot or a home press, Fully is back in front within about 20–25 s. Log: `frame/fully_watch.log`. Backups: `fully_watch.sh.bak-usb` (old USB version), `.bak-20261017-libusb`.
 * **Related folders in** `~`**:** `frame-apks/`, `frame-backup/`, plus screenshots `frame-*.png`. Their contents were not inspected **\[unverified\]**.
 * No Bluetooth stack, no GPS (from context, **\[unverified\]** by me).
 
@@ -252,12 +253,12 @@ flowchart LR
 
 | Item | Identity | Address / link |
 | -- | -- | -- |
-| petit (Mac mini M2 16 GB, user `decoy`) | hub host | 192.168.0.70 (en0/en1), port 8080 |
-| ESP32-S3-BOX-3 | `grok-box3-dash`, ESP32-S3 QFN56 rev v0.2, in the kitchen | Wi-Fi 192.168.0.90, API 6053. USB `/dev/cu.usbmodem2401` on petit for flashing |
-| Kitchen frame PF1007L | AEEZO, Android 6.0.1 | 192.168.0.160 (router reservation), adb Wi-Fi :5555, USB adb backup |
-| Thermal printer | "BlueTooth Printer" 5A:4A:5D:FC:C9:4D, ESC/POS 58 mm/384 dots | BT Classic RFCOMM ch 1 from petit |
+| petit (Mac mini M2 16 GB, user `decoy`) | hub host | `<hub-ip>` (en0/en1), port 8080 |
+| ESP32-S3-BOX-3 | `grok-box3-dash`, ESP32-S3 QFN56 rev v0.2, in the kitchen | Wi-Fi `<box3-ip>`, API 6053. USB `/dev/cu.usbmodem2401` on petit for flashing |
+| Kitchen frame PF1007L | AEEZO, Android 6.0.1 | `<frame-ip>` (router reservation), adb Wi-Fi :5555, USB adb backup |
+| Thermal printer | "BlueTooth Printer" `<printer-mac>`, ESC/POS 58 mm/384 dots | BT Classic RFCOMM ch 1 from petit |
 | Echos | white alexa, blue kitchen, black alexa (+ Dev console = simulator) | Amazon cloud → skill Frida |
-| Cloudflare | account id ends …c926, Worker womble-alexa, Queue womble-alexa | outbound HTTPS only |
+| Cloudflare | account `<acct>`, Worker womble-alexa, Queue womble-alexa | outbound HTTPS only |
 | Harman Kardon Omni 10 | parked | — |
 
 ## 4. Secrets inventory (names and locations only)
@@ -280,21 +281,21 @@ Never print, copy or commit these. To check a Keychain item without reading its 
 2. **Refresh the frame:**
    * The page reconnects on its own every 2 s.
    * After a hand edit of lists, push it: `curl -X POST localhost:8080/api/event -d '{"event":"list.updated","data":{"list":"shopping","action":"show","items":[...],"highlight":[]}}'` (localhost only).
-   * adb: `export ADB_LIBUSB=1; A=/Users/decoy/platform-tools/adb; $A connect 192.168.0.160:5555`. Check focus with `$A -s 192.168.0.160:5555 shell dumpsys window | grep mCurrentFocus`. Screenshot: `$A -s 192.168.0.160:5555 exec-out screencap -p > ~/frame-now.png`.
+   * adb: `export ADB_LIBUSB=1; A=/Users/decoy/platform-tools/adb; $A connect <frame-ip>:5555`. Check focus with `$A -s <frame-ip>:5555 shell dumpsys window | grep mCurrentFocus`. Screenshot: `$A -s <frame-ip>:5555 exec-out screencap -p > ~/frame-now.png`.
    * If the frame sits on the Android home screen, check the watchdog: `launchctl list | grep fullywatch` and `frame/fully_watch.log`. If adb commands hang, kill all adb processes and let the watchdog restart the server (it sets `ADB_LIBUSB=1`).
 3. **Reflash the BOX-3 safely** (ask Andrew first):
    1. Confirm the chip with `esptool chip_id`.
    2. Back up with `esptool --port /dev/cu.usbmodem* read_flash 0 0x1000000 ~/box3-voice/slice1/backup/box3-<date>.bin`. The 16 MB size is **\[unverified\]**.
    3. Build with `cd ~/box3-voice/slice1 && esphome compile firmware/box3-hub.yaml`.
-   4. Flash OTA with `esphome run firmware/box3-hub.yaml --device 192.168.0.90`, or over USB.
+   4. Flash OTA with `esphome run firmware/box3-hub.yaml --device <box3-ip>`, or over USB.
    5. Check that hub.log reconnects.
 
    Never erase flash or burn eFuses.
 4. **Redeploy the Worker:** `cd ~/box3-voice/alexa && export PATH=~/.local/node/bin:$PATH && node test/test.mjs && cf deploy`. Secret changes go through `cf workers secrets update ALEXA_SKILL_ID --worker womble-alexa …`.
-5. **Print a slip:** build an ESC/POS file in the §2.7 slip format, then run `~/box3-voice/tools/btprint 5A:4A:5D:FC:C9:4D /path/slip.bin 1`. Check that the output shows `sent N`, status `0x16` and `closed`.
+5. **Print a slip:** build an ESC/POS file in the §2.7 slip format, then run `~/box3-voice/tools/btprint "$PRINTER_MAC" /path/slip.bin 1`. Check that the output shows `sent N`, status `0x16` and `closed`.
 6. **After a power cut:** nothing manual should be needed. Check `launchctl list | grep andrew` (box3hub + fullywatch), hub.log for "connected to BOX-3", and the frame focus (step 2).
 7. **Recover the printer:**
-   * If btprint says "not open": run `tools/btdisc 5A:4A:5D:FC:C9:4D`, power-cycle the printer, and retry. If that still fails, cycle Bluetooth with `tools/btpower 0; sleep 2; tools/btpower 1`.
+   * If btprint says "not open": run `tools/btdisc "$PRINTER_MAC"`, power-cycle the printer, and retry. If that still fails, cycle Bluetooth with `tools/btpower 0; sleep 2; tools/btpower 1`.
    * If something opened `/dev/cu.BlueToothPrinter` and the system hangs, only a reboot of petit clears it. Ask Andrew.
 8. **Alexa not arriving:**
    * Run `alexa_pull.py --status` and grep hub.log for `alexa`.
@@ -329,14 +330,13 @@ Never print, copy or commit these. To check a Keychain item without reading its 
  3. **"Print the shopping list" voice command.** Add a router intent and a `print.py` module that builds ESC/POS like `send.py` and shells out to `btprint`. Emit `print.status` (already defined in DISPLAY.md) and set `DISPLAY_PRINTER=1`.
  4. **Print quality.** Bottom feed done (`ESC d 8`, 2026-10-17). Darker density (ESC/POS heat settings `ESC 7` **\[printer support unverified\]**) is still open but low priority; print looks fine. Deferred until things are finalised.
  5. **List item splitting.** Split "X and Y" into separate items. Watch out for compounds like "fish and chips"; add tests.
- 6. **List management.** Remove/clear/tick-off and a to-do list (DISPLAY.md §8 decision 3), plus atomic writes.
+ 6. **List management.** Remove/clear/tick-off and a to-do list (DISPLAY.md §8 decision 3), (writes are already atomic).
  7. **Routing to Grok bots** for research, search and chat categories.
  8. **Music and media.** `display.media_handler` is the hook; the frame taps already exist.
  9. **Timers.** Chime on the BOX-3. Step mode is in DISPLAY.md.
 10. **Home Assistant as an action target** (`home.done`). Coordinate with the bots that own the Bridge Plan.
 11. **Harman Kardon Omni 10.** Parked.
 12. **Housekeeping.**
-    * Add `requests` to requirements.
     * Prune `data/tts/`.
     * Fix stale alexa/README text (skill id).
     * Make a BOX-3 flash backup (the board is now on USB at `/dev/cu.usbmodem2401`).

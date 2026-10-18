@@ -1,0 +1,12 @@
+womble #1 · home assistant
+Copyright 2026 Andrew Webster
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes third-party material:
+
+- slice1/backup/official-esp32-s3-box-3.yaml is the official ESP32-S3-BOX-3
+  voice assistant configuration from esphome/wake-word-voice-assistants
+  (https://github.com/esphome/wake-word-voice-assistants), Copyright the
+  ESPHome authors, licensed under the Apache License, Version 2.0. It is kept
+  unmodified (apart from an attribution header) as a reference.

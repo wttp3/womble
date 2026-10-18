@@ -36,3 +36,12 @@ The brand pack lives in [`docs/brand/`](docs/brand/), with the full guide at [`d
 
 - [`DISPLAY.md`](DISPLAY.md): kitchen display layout plan
 - [`docs/WOMBLE-SPEC.md`](docs/WOMBLE-SPEC.md): system spec
+
+## Configuration
+
+Home-network and cloud identifiers are not in the repo. Copy [`local.env.example`](local.env.example) to `local.env` (gitignored) and fill it in; `slice1/hub/launch.sh`, `slice1/run.sh` and `frame/fully_watch.sh` source it. Firmware network settings and keys go in `slice1/firmware/secrets.yaml` (template [`secrets.example.yaml`](slice1/firmware/secrets.example.yaml)). API keys and tokens stay in the macOS Keychain.
+
+## Licence
+
+Apache License 2.0, copyright 2026 Andrew Webster. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) (includes the attribution for the upstream ESPHome reference config).
+

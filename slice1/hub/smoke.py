@@ -2,7 +2,7 @@
 import json, os, subprocess, sys, time, wave
 from pathlib import Path
 import numpy as np
-os.environ.setdefault("BOX3_NOISE_PSK", "unused"); os.environ.setdefault("HUB_HOST_IP", "127.0.0.1")
+os.environ.setdefault("BOX3_NOISE_PSK", "unused"); os.environ.setdefault("HUB_HOST_IP", "127.0.0.1"); os.environ.setdefault("BOX3_HOST", "127.0.0.1")
 sys.path.insert(0, str(Path(__file__).parent))
 t0 = time.perf_counter(); import hub; t_imp = time.perf_counter()
 out = {}

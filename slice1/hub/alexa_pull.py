@@ -13,8 +13,9 @@ from pathlib import Path
 from aiohttp import ClientSession, ClientTimeout
 
 log = logging.getLogger("alexa")
-ACCOUNT_ID = os.environ.get("ALEXA_CF_ACCOUNT", "1ca2ad490fbecf166fef60d15318c926")
-QUEUE_ID = os.environ.get("ALEXA_QUEUE_ID", "df7fc532644e4b1493fd5c4510718f54")   # queue womble-alexa
+# Cloudflare account + queue ids come from the environment (local.env, untracked); no built-in default.
+ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID") or os.environ.get("ALEXA_CF_ACCOUNT", "")
+QUEUE_ID = os.environ.get("CF_QUEUE_ID") or os.environ.get("ALEXA_QUEUE_ID", "")   # queue womble-alexa
 KC_SERVICE, KC_ACCOUNT = "womble-cf-queue", os.environ.get("ALEXA_KC_ACCOUNT", "decoy")
 API = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/queues/{QUEUE_ID}/messages"
 DATA = Path(__file__).resolve().parent / "data"
@@ -117,9 +118,12 @@ class AlexaPuller:
             return r.status, body
 
     async def run(self):
+        if not (ACCOUNT_ID and QUEUE_ID):   # clean return: supervise() leaves it stopped
+            self.state = "disabled"
+            log.error("alexa pull disabled: CF_ACCOUNT_ID / CF_QUEUE_ID not set (see local.env.example)"); return
         token = await self.wait_for_token()
         self.state = "running"; backoff = 0.0
-        log.info("alexa pull running (queue %s)", QUEUE_ID)
+        log.info("alexa pull running (queue womble-alexa)")
         async with ClientSession(timeout=ClientTimeout(total=15)) as s:
             while True:
                 try:

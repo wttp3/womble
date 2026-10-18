@@ -3,7 +3,7 @@ BOX-3 (ESPHome voice_assistant over native API) -> mlx-whisper -> rule router
 -> local JSON list -> TTS (Kokoro/mlx-audio, fallback macOS `say`) -> BOX-3 media player
 + WebSocket card to display page.  Secrets come from the environment only.
 
-Env: BOX3_HOST (192.168.0.90), BOX3_NOISE_PSK (api encryption key), HUB_HOST_IP (petit LAN IP
+Env: BOX3_HOST (required, BOX-3 address), BOX3_NOISE_PSK (api encryption key), HUB_HOST_IP (petit LAN IP
 the BOX-3 can reach), HUB_PORT (8080), WHISPER_MODEL, TTS_ENGINE (kokoro|say).
 NOTE: the aioesphomeapi voice-assistant API names below match how Home Assistant's esphome
 integration uses them; check them against the installed aioesphomeapi version (see README).
@@ -25,7 +25,7 @@ TTS_DIR = DATA / "tts"; TTS_DIR.mkdir(exist_ok=True)
 LIST_FILE = DATA / "lists.json"
 TIMING_LOG = DATA / "timing.jsonl"
 
-BOX3_HOST = os.environ.get("BOX3_HOST", "192.168.0.90")
+BOX3_HOST = os.environ["BOX3_HOST"]   # set in ~/box3-voice/local.env (untracked)
 PSK = os.environ["BOX3_NOISE_PSK"]
 HUB_IP = os.environ["HUB_HOST_IP"]
 HUB_PORT = int(os.environ.get("HUB_PORT", "8080"))

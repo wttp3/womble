@@ -4,8 +4,8 @@ Built 2026-10-15. Locale **en-GB**, invocation **frida** ("Alexa, ask Frida to a
 
 | Thing | Value |
 |---|---|
-| Worker (skill endpoint) | `https://womble-alexa.andrew-ca2.workers.dev` (path `/` or `/alexa`) |
-| Queue | `womble-alexa` (id `df7fc532644e4b1493fd5c4510718f54`), HTTP pull consumer: batch 10, visibility 60 s, max retries 3, retry delay 5 s |
+| Worker (skill endpoint) | `<worker-url>` (the `https://womble-alexa.<subdomain>.workers.dev` URL printed by `cf deploy`; path `/` or `/alexa`) |
+| Queue | `womble-alexa` (id `<queue-id>`), HTTP pull consumer: batch 10, visibility 60 s, max retries 3, retry delay 5 s |
 | Worker secret | `ALEXA_SKILL_ID` (currently the placeholder `unset` → every request gets 400) |
 | Interaction model | `skill/interaction-model.en-GB.json` |
 | Hub module | `~/box3-voice/slice1/hub/alexa_pull.py` (wired into hub.py; disabled until the Keychain item exists) |
@@ -15,7 +15,8 @@ Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`ro
 `cloudflare.config.ts`, `test/test.mjs`. Build/deploy needs Node ≥ 22.18: `export PATH=~/.local/node/bin:$PATH`.
 - Test: `node test/test.mjs` (positive path uses a stub verifier passed in by the test only; the deployed entry always verifies)
 - Deploy: `cf deploy`
-- Set skill id: `cf workers secrets update ALEXA_SKILL_ID --worker womble-alexa --type secret_text --text amzn1.ask.skill.…`
+- Config outside git: `cloudflare.config.ts` holds no account or skill id. `cf deploy` uses the account you are logged in to (`cf login`), the skill id lives only in the Worker secret `ALEXA_SKILL_ID`, and the hub reads `CF_ACCOUNT_ID=<acct>` / `CF_QUEUE_ID=<queue-id>` from the untracked `~/box3-voice/local.env` (template `local.env.example`).
+- Set skill id: `cf workers secrets update ALEXA_SKILL_ID --worker womble-alexa --type secret_text --text <skill-id>`
 
 ## Andrew: steps to finish
 
@@ -31,9 +32,9 @@ Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`ro
 
 ### 3. Set the endpoint
 1. Left menu: **Endpoint** → choose **HTTPS**.
-2. Default Region: `https://womble-alexa.andrew-ca2.workers.dev`
+2. Default Region: `<worker-url>`
 3. SSL certificate type: **"My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority"**.
-4. **Save**. On the same page, **Copy** the Skill ID (`amzn1.ask.skill.…`) and send it to me — I set it as the Worker secret `ALEXA_SKILL_ID`. Until then the Worker answers 400 and Alexa says there was a problem with the skill.
+4. **Save**. On the same page, **Copy** the Skill ID (`<skill-id>`) and send it to me — I set it as the Worker secret `ALEXA_SKILL_ID`. Until then the Worker answers 400 and Alexa says there was a problem with the skill.
 
 ### 4. Enable it on your Echos
 1. **Test** tab → set "Skill testing is enabled in" to **Development**.
@@ -45,7 +46,7 @@ Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`ro
 1. https://dash.cloudflare.com/profile/api-tokens → **Create Token** → **Create Custom Token** (Get started).
 2. Token name: `womble-cf-queue`.
 3. Permissions: one row: **Account** · **Queues** · **Edit** (Edit = read+write; write is needed to ack).
-4. Account Resources: **Include** · *your account* (Andrew's account, id …c926). Nothing else.
+4. Account Resources: **Include** · *your account* (your account, `<acct>`). Nothing else.
 5. Optional: Client IP Address Filtering → Is in → your home public IP. TTL: leave empty or set a year.
 6. **Continue to summary** → **Create Token**. Copy the token (shown once).
 7. On petit, logged in as `decoy`, in Terminal:
@@ -57,7 +58,7 @@ Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`ro
    launchctl kickstart -k gui/$(id -u)/com.andrew.box3hub
    ```
    `~/box3-voice/slice1/hub.log` should show `alexa pull running`. Check without revealing anything: `cd ~/box3-voice/slice1/hub && .venv/bin/python alexa_pull.py --status`.
-   Kill switch: set `ALEXA_PULL=0` in `run.sh` (or delete the Keychain item) and restart.
+   Kill switch: set `ALEXA_PULL=0` in `~/box3-voice/local.env` (or delete the Keychain item) and restart.
 
 ### 6. Name the rooms (3 Echos)
 Say something to each Echo once. Each new one is saved in `hub/data/alexa_devices.json` as "Echo 1/2/3" and the frame toasts "New Echo". Edit `room`/`name` there (e.g. `"room": "Kitchen", "name": "Kitchen Echo"`); no restart needed.

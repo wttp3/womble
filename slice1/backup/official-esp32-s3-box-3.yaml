@@ -1,3 +1,7 @@
+# Upstream reference config, not written by this project.
+# Source: esphome/wake-word-voice-assistants (https://github.com/esphome/wake-word-voice-assistants),
+# file esp32-s3-box-3/esp32-s3-box-3.yaml. Copyright the ESPHome authors, Apache License 2.0.
+# Kept unmodified below this header; see NOTICE.
 ---
 substitutions:
   name: esp32-s3-box-3

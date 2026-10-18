@@ -1,7 +1,7 @@
 """Replay a captured utterance through Session.feed() and show where it would end."""
 import os, sys, wave
 from pathlib import Path
-os.environ.setdefault("BOX3_NOISE_PSK", "x"); os.environ.setdefault("HUB_HOST_IP", "127.0.0.1")
+os.environ.setdefault("BOX3_NOISE_PSK", "x"); os.environ.setdefault("HUB_HOST_IP", "127.0.0.1"); os.environ.setdefault("BOX3_HOST", "127.0.0.1")
 sys.path.insert(0, str(Path(__file__).parent))
 import importlib.util
 spec = importlib.util.spec_from_file_location("hubmod", Path(__file__).parent / "hub.py")

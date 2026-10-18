@@ -3,6 +3,7 @@ secrets.yaml
 .env
 .env.*
 .dev.vars
+local.env
 # build + deps
 .esphome/
 .venv/
@@ -26,3 +27,11 @@ slice1/backup/*.bin
 # screenshots
 slice1/hub/tests/shots/
 frame-boot*.png
+# audio + binary backups anywhere (voice clips, firmware dumps)
+*.wav
+*.mp3
+*.ogg
+*.opus
+*.flac
+*.m4a
+*.bin

@@ -11,7 +11,7 @@ It is the documented path ESPHome voice firmware uses (the same events HA's esph
 1. Remove the BOX-3 from Home Assistant (Settings → Devices → ESPHome → delete or disable). Otherwise HA keeps subscribing to voice.
 2. `./setup.sh` on petit.
 3. Store the existing API key in Keychain (`security add-generic-password …`), or generate a new one and put it in `firmware/secrets.yaml`.
-4. Flash: `esphome run firmware/box3-hub.yaml --device 192.168.0.90` (OTA). Keep the current YAML/firmware as a rollback.
+4. Flash: `esphome run firmware/box3-hub.yaml --device <box3-ip>` (OTA). Keep the current YAML/firmware as a rollback.
 5. `./run.sh`, open `http://<petit-ip>:8080/` on the frame, say "Okay Nabu, add eggs to the shopping list".
 
 ## Smoke test results (petit, M2 16 GB, 2026-10-15)

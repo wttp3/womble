@@ -2,8 +2,12 @@
 # keeps Fully Kiosk in front on the kitchen frame (vendor blocks Fully's boot-start)
 # talks to the frame over adb wifi (persist.adb.tcp.port=5555 set on the frame)
 export ADB_LIBUSB=1  # native mac usb backend hangs after power cuts
-A=/Users/decoy/platform-tools/adb
-F=192.168.0.160:5555
+A="${ADB:-$HOME/platform-tools/adb}"
+# frame address lives in the untracked ../local.env (FRAME_HOST=<frame-ip>, optional FRAME_ADB_PORT)
+L="$(cd "$(dirname "$0")/.." && pwd)/local.env"
+[ -f "$L" ] && { set -a; . "$L"; set +a; }
+if [ -z "${FRAME_HOST:-}" ]; then echo "$(date '+%F %T') FRAME_HOST not set (see local.env.example); idle"; sleep 300; exit 1; fi
+F="$FRAME_HOST:${FRAME_ADB_PORT:-5555}"
 while true; do
   if [ "$($A -s $F get-state 2>/dev/null)" != "device" ]; then
     $A disconnect $F >/dev/null 2>&1; $A connect $F >/dev/null 2>&1
