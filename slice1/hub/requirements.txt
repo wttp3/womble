@@ -5,4 +5,4 @@ misaki[en]           # required by Kokoro in mlx-audio
 numpy
 soundfile
 aiohttp
-requests
+requests             # xAI STT (stt_xai.py) and the brain Responses API (brain/core.py, streaming SSE)

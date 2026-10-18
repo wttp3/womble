@@ -1,7 +1,45 @@
 # Slice 1: BOX-3 → petit hub → list + spoken reply + display card
 
-Flow: "Okay Nabu" (on-device) → ESPHome `voice_assistant` streams 16 kHz PCM over the encrypted native API → `hub.py` (aioesphomeapi client) → energy VAD → mlx-whisper → regex router (`add X to Y list`, `what's on Y list`) → `data/lists.json` → WebSocket card on `http://petit:8080/` → TTS WAV served at `/tts/…` and its URL sent in the TTS_END event → BOX-3 media player plays it.
-Timing per utterance is appended to `hub/data/timing.jsonl` (eos/stt/route/display/tts ms since wake + stt_only/tts_only).
+Flow: "Okay Nabu" (on-device) → ESPHome `voice_assistant` streams 16 kHz PCM over the encrypted native API → `hub.py` (aioesphomeapi client) → energy VAD → mlx-whisper → regex router (`add X to Y list`, `what's on Y list`) → `data/lists.json`. Anything the router does not match is answered by the brain (`grok-4.7`) and spoken back. The frame gets a WebSocket card on `http://<hub-ip>:8080/`. TTS writes a WAV at `/tts/…`, the hub sends that URL in TTS_END, and the BOX-3 plays it.
+Timing per utterance is appended to `hub/data/timing.jsonl` (eos/stt/route/display/tts ms since wake + stt_only/tts_only, and `llm_ttft_ms` / `llm_total_ms` on brain turns).
+
+## Brain
+
+List and record commands stay on the regex and work with no network. Other sentences go to `POST https://api.x.ai/v1/responses` (`grok-4.7`, reasoning effort low, `store: false`). The persona is `hub/brain/persona.md`. Tool schemas live only in `hub/brain/tools.py`. The plan is [`docs/plans/GROK-ROUTING-PLAN.md`](../docs/plans/GROK-ROUTING-PLAN.md).
+
+The brain key is its own Keychain item, not the speech-to-text key `womble-xai`. Add it on the hub Mac (the command prompts for the secret):
+
+```
+security add-generic-password -a $USER -s womble-brain-xai -U -w
+```
+
+The hub reads that item at runtime, the same way `stt_xai.py` reads `womble-xai`. It is never written to the repo or to the log. Cap the key in the xAI console. If xAI is down, the key is missing, or the call times out, the box says "Connection unavailable." and lists still work. A timeout is that turn only: it does not count toward the circuit breaker. After three connection or HTTP failures the brain pauses for 60 seconds. The warning names the stage the request reached (`dns`, `connect`, an HTTP status, `first-byte`, or `first-token`), plus whether a proxy is set and how many IPv4 and IPv6 answers DNS returned. It does not include the key.
+
+An empty transcript after a wake ends the turn without speaking.
+
+| Env | Default | |
+|---|---|---|
+| `VAD_TRAIL_SIL_S` | `1.2` | Seconds of quiet that end a turn. `0.65` is the old, tighter cutoff. Read at startup. |
+| `BRAIN_TIMEOUT_S` | `8` | How long a BOX-3 turn waits on xAI before the offline line. A measured p95 with web search on was about 4.2 s, so 4 s sat inside that tail. |
+| `BRAIN_WEB_SEARCH` | `1` | Server-side web search, and only when the utterance looks like a live fact (weather, news, a score, a price, today, who won). Ordinary questions such as boiling an egg do not get it. Set `0` to leave it out entirely. |
+| `BRAIN_MODEL` | `grok-4.7` | Responses model. |
+| `BRAIN_MAX_OUTPUT_TOKENS` | `200` | Caps the spoken answer. |
+| `BRAIN_MEMORY_TURNS` | `6` | Turns kept per device, in process. |
+| `BRAIN_MEMORY_TTL_S` | `300` | Drop that memory after this much quiet. |
+| `BRAIN_BREAKER_FAILS` | `3` | Failures before the circuit opens. |
+| `BRAIN_BREAKER_COOLDOWN_S` | `60` | How long it stays open. |
+| `XAI_BRAIN_API_KEY` | unset | Optional override. Leave it unset on the hub so the Keychain item is used. Never commit it. |
+
+The first sentence is synthesised while the rest of the reply is still arriving, then joined into the one WAV the BOX-3 already fetches. `llm_ttft_ms` and `llm_total_ms` are logged on every brain turn.
+
+```
+python tests/test_brain.py
+python brain_latency.py
+python brain_latency.py --route
+python brain_latency.py --route --hub-timeout
+```
+
+Run them from `slice1/hub/`. The latency script calls the live API (about 20 prompts) and prints p50/p90/p95. It needs the key. Plain mode calls `Brain.handle`, which is what the hub calls after the regex misses. `--route` loads the hub and calls `route()` with the same first-sentence TTS hook the BOX-3 uses. `--hub-timeout` waits `BRAIN_TIMEOUT_S` instead of the 30 s measurement budget. A shell run does not inherit the LaunchAgent environment; the failure line's `proxy=` and `dns=` fields are how to compare the two.
 
 ## Why the native API method
 It is the documented path ESPHome voice firmware uses (the same events HA's esphome integration sends). aioesphomeapi exposes `subscribe_voice_assistant(handle_start, handle_stop, handle_audio)` and `send_voice_assistant_event`. No custom C++ is needed. Returning 0 from handle_start selects API audio, not UDP.

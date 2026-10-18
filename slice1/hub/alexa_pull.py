@@ -8,7 +8,7 @@ hub.py wiring:   AlexaPuller(disp, route, push_card) supervised from main(), bef
                  start() is the same loop without the supervisor (ALEXA_PULL=0 returns None).
 Standalone check:  .venv/bin/python alexa_pull.py --status | --once
 """
-import asyncio, base64, collections, json, logging, os, random, subprocess, time
+import asyncio, base64, collections, inspect, json, logging, os, random, subprocess, time
 from pathlib import Path
 from aiohttp import ClientSession, ClientTimeout
 
@@ -51,6 +51,15 @@ def decode_body(body) -> dict:
     if isinstance(body, dict): return body
     try: return json.loads(body)
     except (ValueError, TypeError): return json.loads(base64.b64decode(body))
+
+def _call_route(route, text, **kw):
+    """Call route with the kwargs it accepts. A coroutine result is awaited by the caller."""
+    try:
+        params = inspect.signature(route).parameters
+    except (TypeError, ValueError):
+        params = {}
+    accepted = {k: v for k, v in kw.items() if k in params}
+    return route(text, **accepted)
 
 class Devices:
     def __init__(self, path=DEVICES): self.path = path; self.map = self._load()
@@ -189,7 +198,9 @@ class AlexaPuller:
         if new:
             await self.disp.emit("toast", {"text": f"New Echo ({room}): rename it in alexa_devices.json", "kind": "info"})
         await self.disp.emit("voice.heard", {"text": text, **chip}, corr=job.get("requestId"))
-        res = self.route(text)
+        res = _call_route(self.route, text, source=f"alexa:{room}", session=job.get("sessionId") or f"alexa:{room}")
+        if asyncio.iscoroutine(res):
+            res = await res
         card = dict(res["card"])
         if card.get("type") == "text":   # reply cards show the source label; list cards toast as usual
             await self.disp.emit("reply", {"title": card.get("title", ""), "body": card.get("body", ""),

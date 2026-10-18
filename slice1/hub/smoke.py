@@ -1,5 +1,5 @@
 """Offline smoke test: say -> wav -> mlx-whisper -> router -> Kokoro. Appends to data/smoke.jsonl."""
-import json, os, subprocess, sys, time, wave
+import asyncio, json, os, subprocess, sys, time, wave
 from pathlib import Path
 import numpy as np
 os.environ.setdefault("BOX3_NOISE_PSK", "unused"); os.environ.setdefault("HUB_HOST_IP", "127.0.0.1"); os.environ.setdefault("BOX3_HOST", "127.0.0.1")
@@ -17,7 +17,7 @@ res = []
 for p in phrases:
     pcm = load(p)
     a = time.perf_counter(); text = hub.transcribe(pcm); b = time.perf_counter()
-    r = hub.route(text); c = time.perf_counter()
+    r = asyncio.run(hub.route(text)); c = time.perf_counter()
     f = hub.tts(r["speech"]); d = time.perf_counter()
     res.append({"said": p, "heard": text, "audio_s": round(len(pcm)/32000, 2), "category": r["category"],
                 "stt_ms": round((b-a)*1000), "route_ms": round((c-b)*1000, 2), "tts_ms": round((d-c)*1000),

@@ -36,6 +36,7 @@ The brand pack lives in [`docs/brand/`](docs/brand/), with the full guide at [`d
 
 - [`DISPLAY.md`](DISPLAY.md): kitchen display layout plan
 - [`docs/WOMBLE-SPEC.md`](docs/WOMBLE-SPEC.md): system spec
+- [`docs/plans/GROK-ROUTING-PLAN.md`](docs/plans/GROK-ROUTING-PLAN.md): brain and Alexa routing plan
 
 ## Configuration
 
