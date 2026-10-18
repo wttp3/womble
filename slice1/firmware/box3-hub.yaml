@@ -272,13 +272,15 @@ font:
     id: font_big
     size: 56
 
-# Idle mark. Cropped from docs/womble-dog.png and inverted to white ink on black.
-# Grayscale is one byte per pixel (109×78 = 8502 bytes of flash). Drawn on idle only.
+# Idle mark. Colour dog from docs/womble-dog-colour.png, trimmed and pre-sized to 109x77
+# with a transparent background. RGB565 + 8-bit alpha is three bytes per pixel
+# (~25 KB of flash). Drawn on idle only.
 image:
   - platform: file
     file: images/womble-idle.png
     id: womble_logo
-    type: GRAYSCALE
+    type: RGB565
+    transparency: alpha_channel
     resize: 109x78
 
 color:
