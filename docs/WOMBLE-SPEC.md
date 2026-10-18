@@ -108,7 +108,7 @@ flowchart LR
 * **BOX-3 link:** `APIClient(BOX3_HOST, 6053, noise_psk)` in an explicit reconnect loop (retries every 5 s). It mirrors device log lines that match WAKE/micro_wake/voice_assistant/\[W\]/\[E\] into hub.log under the `box3` logger.
 * **HTTP (port 8080, 0.0.0.0):**
   * `GET /`: display.html
-  * `GET /static/womble-mark.webp`, `/favicon.png`, `/favicon.ico`, `/apple-touch-icon.png`: the dog mark. Small WebP/PNG copies of `docs/womble-dog.png`. The 1.2 MB original is not served.
+  * `GET /static/womble-mark.webp`, `/favicon.png`, `/favicon.ico`, `/apple-touch-icon.png`: the dog mark. Small WebP/PNG copies of the colour mark `docs/womble-dog-colour.png` (trimmed, transparent). The full-size original is not served.
   * `WS /ws`
   * `POST /api/event`
   * `GET /api/taps`
