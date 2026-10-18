@@ -153,6 +153,19 @@ disp.tap_hooks.append(REC.on_tap); disp.snapshot_extra["record"] = REC.counts
 async def push_card(card: dict):       # kept for slice-1 callers; translated to list.updated / reply events
     await disp.push_card(card)
 
+def begin_sentence_audio(spoken: dict, sentence: str):
+    """Kokoro on the first sentence while the model is still talking.
+
+    Later sentences are queued. Session.finish and brain_latency.py --route
+    both use this, so a latency run starts the same TTS work the BOX-3 does.
+    """
+    spoken["text"].append(sentence)
+    if spoken["first"] is None:
+        spoken["first"] = asyncio.create_task(asyncio.to_thread(synthesize, sentence))
+    else:
+        spoken["rest"].append(sentence)
+
+
 async def _speak(speech: str, spoken: dict) -> Path:
     """Play streamed sentence audio when it matches the final line, else one TTS call.
 
@@ -287,13 +300,8 @@ class Session:
             else:
                 await disp.emit("voice.heard", {"text": text})
                 spoken = {"first": None, "rest": [], "text": []}
-                def on_sentence(sentence: str):
-                    spoken["text"].append(sentence)
-                    if spoken["first"] is None:
-                        spoken["first"] = asyncio.create_task(asyncio.to_thread(synthesize, sentence))
-                    else:
-                        spoken["rest"].append(sentence)
-                res = await route(text, on_sentence=on_sentence); t["route"] = time.perf_counter()
+                res = await route(text, on_sentence=lambda sentence: begin_sentence_audio(spoken, sentence))
+                t["route"] = time.perf_counter()
                 speech = res.get("speech") or ""
                 if not speech:
                     c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_END, None)

@@ -154,19 +154,45 @@ TOOLS = [
 BY_NAME = {t.name: t for t in TOOLS}
 
 
+# Live facts only. "How do I boil an egg?" does not match; offering web_search
+# there makes the model hunt before the first spoken token.
+_LIVE_FACT = re.compile(
+    r"\b("
+    r"today|tonight|tomorrow|yesterday|"
+    r"this (?:week|weekend|morning|evening)|"
+    r"latest|current(?:ly)?|right now|"
+    r"news|weather|forecast|scores?|prices?|"
+    r"who won|what happened"
+    r")\b",
+    re.I,
+)
+
+
+def wants_live_fact(text: str) -> bool:
+    return bool(_LIVE_FACT.search(text or ""))
+
+
 def _web_search_enabled(include_web_search):
     if include_web_search is not None:
         return include_web_search
     return os.environ.get("BRAIN_WEB_SEARCH", "1") != "0"
 
 
-def responses_tools(include_web_search=None) -> list:
-    """Tools for POST /v1/responses. web_search runs on xAI's side."""
-    tools = [{"type": "web_search"}] if _web_search_enabled(include_web_search) else []
+def responses_tools(include_web_search=None, text=None) -> list:
+    """Tools for POST /v1/responses. web_search runs on xAI's side.
+
+    With no utterance, the full list is returned (realtime session, and
+    BRAIN_WEB_SEARCH still turns it off). Pass text and search is attached
+    only when the sentence looks like a live fact.
+    """
+    enabled = _web_search_enabled(include_web_search)
+    if enabled and text is not None and include_web_search is None:
+        enabled = wants_live_fact(text)
+    tools = [{"type": "web_search"}] if enabled else []
     tools.extend(t.schema() for t in TOOLS)
     return tools
 
 
 def realtime_tools(include_web_search=None) -> list:
-    """Same flat schemas for the realtime voice API, when that lands."""
+    """Full flat schemas for a long-lived realtime session, when that lands."""
     return responses_tools(include_web_search)

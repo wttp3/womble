@@ -97,6 +97,8 @@ flowchart LR
 
 **2.6 Fallbacks.** On a timeout (4 s on the BOX-3; see §4 for Alexa), 5xx, 429, a DNS failure or a missing key, say **"Connection unavailable."** (pre-rendered) and emit `error {code:"brain"}`. A circuit breaker opens after 3 failures for 60 s. Lists still work, because the regex runs first and whisper is the local fallback.
 
+The shipped default is `BRAIN_TIMEOUT_S=8` (a live p95 with web search on was about 4.2 s). A timeout does not count toward those three failures. Web search is attached only when the utterance looks like a live fact.
+
 ---
 
 ## 3. Bot hand-off (dedicated research bot)

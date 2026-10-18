@@ -4,7 +4,7 @@ No network and no Keychain. Run from anywhere:
 
   python tests/test_brain.py
 """
-import asyncio, json, logging, os, sys, tempfile, types
+import asyncio, json, logging, os, sys, tempfile, time, types
 from pathlib import Path
 
 os.environ.setdefault("BOX3_NOISE_PSK", "unused")
@@ -25,6 +25,7 @@ sys.modules["mlx_whisper"] = mw
 import numpy as np
 import lists as lists_mod
 import hub
+import brain.core as brain_core
 from brain.core import OFFLINE, Brain, BrainHTTPError, load_persona
 from brain import key as brain_key
 from brain import tools as brain_tools
@@ -64,6 +65,12 @@ async def main():
     tmp = Path(tempfile.mkdtemp())
     store = lists_mod.ListStore(tmp / "lists.json")
     disp = Disp()
+
+    os.environ.pop("BRAIN_TIMEOUT_S", None)
+    check(Brain(store).timeout == 8.0, "default timeout")
+    os.environ["BRAIN_TIMEOUT_S"] = "2.5"
+    check(Brain(store).timeout == 2.5, "BRAIN_TIMEOUT_S")
+    os.environ.pop("BRAIN_TIMEOUT_S", None)
 
     # --- print guard ---
     quiet = brain_tools.ToolContext("what's on the shopping list", "box3-kitchen", "box3-kitchen", store, disp)
@@ -112,9 +119,22 @@ async def main():
     check(body["reasoning"] == {"effort": "low"} and body["stream"] is True, "reasoning and stream")
     check(body["instructions"] == load_persona(), "persona is not verbatim")
     names = [t.get("name") for t in body["tools"]]
-    check(body["tools"][0] == {"type": "web_search"}, "web_search")
+    check(all(t.get("type") != "web_search" for t in body["tools"]), "general question offered web search")
     check("list_add" in names and "list_read" in names and "print_list" in names, names)
+    check(all(t.get("type") != "web_search" for t in brain_tools.responses_tools(text="How do I boil an egg?")),
+          "egg offered web search")
+    check(all(t.get("type") != "web_search" for t in brain_tools.responses_tools(text="How do I slice a pomegranate?")),
+          "pomegranate offered web search")
+    check(brain_tools.responses_tools(text="what's the weather today")[0] == {"type": "web_search"}, "weather")
+    check(brain_tools.responses_tools(text="who won today")[0] == {"type": "web_search"}, "who won")
+    check(brain_tools.realtime_tools()[0] == {"type": "web_search"}, "realtime drops search")
     check(brain_tools.realtime_tools() == brain_tools.responses_tools(), "realtime schemas")
+    os.environ["BRAIN_WEB_SEARCH"] = "0"
+    try:
+        off = brain_tools.responses_tools(text="what's the weather today")
+        check(all(t.get("type") != "web_search" for t in off), "BRAIN_WEB_SEARCH=0")
+    finally:
+        os.environ.pop("BRAIN_WEB_SEARCH", None)
     before = len(payloads)
     for phrase, cat in (
         ("add milk", "list.add"),
@@ -165,8 +185,45 @@ async def main():
 
     calls["n"] = 0
     slow = Brain(store, disp, transport=hang, key_getter=lambda: FAKE_KEY, timeout=0.4)
-    res = await slow.handle("slow")
-    check(res.speech == OFFLINE and calls["n"] == 1, "timeout")
+    for i in range(3):
+        res = await slow.handle("slow")
+        check(res.speech == OFFLINE, f"timeout {i}")
+    check(calls["n"] == 3 and not slow.breaker.is_open() and slow.breaker.fails == 0,
+          "timeouts counted toward the breaker")
+    res = await slow.handle("after timeouts")
+    check(calls["n"] == 4 and res.speech == OFFLINE, "breaker skipped xAI after timeouts")
+
+    calls["n"] = 0
+
+    async def mixed(payload, key, timeout):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            await asyncio.sleep(5)
+            yield {}
+            return
+        raise BrainHTTPError(503)
+        yield {}
+
+    mixed_brain = Brain(store, disp, transport=mixed, key_getter=lambda: FAKE_KEY, timeout=0.4)
+    await mixed_brain.handle("a")
+    await mixed_brain.handle("b")
+    await mixed_brain.handle("c")
+    check(mixed_brain.breaker.fails == 2 and not mixed_brain.breaker.is_open(),
+          "timeout reset hard failures")
+    await mixed_brain.handle("d")
+    check(mixed_brain.breaker.is_open() and calls["n"] == 4, "third http failure")
+
+    async def req_timeout(payload, key, timeout):
+        calls["n"] += 1
+        raise brain_requests.exceptions.Timeout("read")
+        yield {}
+
+    calls["n"] = 0
+    rt = Brain(store, disp, transport=req_timeout, key_getter=lambda: FAKE_KEY, timeout=2)
+    for _ in range(3):
+        res = await rt.handle("rt")
+        check(res.speech == OFFLINE, "requests timeout")
+    check(calls["n"] == 3 and not rt.breaker.is_open(), "requests timeout opened the breaker")
     print("PASS offline, timeout, circuit breaker")
 
     # --- first sentence is available before the stream ends ---
@@ -270,6 +327,8 @@ async def main():
         return FakeResp()
 
     real_post = brain_requests.post
+    real_families = brain_core._families
+    brain_core._families = lambda host, port=443: "ipv4=1,ipv6=0"
     brain_requests.post = fake_post
     try:
         live = Brain(store, disp, key_getter=lambda: FAKE_KEY, timeout=2)
@@ -278,6 +337,51 @@ async def main():
     finally:
         brain_requests.post = real_post
     print("PASS mocked responses stream")
+
+    # Headers came back, one token, then the socket sat there. The timeout log
+    # has to name that stage and keep the token time, without the key.
+    def stall_post(url, **kw):
+        class R:
+            status_code = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def iter_lines(self, decode_unicode=True):
+                yield 'data: {"type":"response.output_text.delta","delta":"Hi. "}'
+                time.sleep(5)
+                if False:
+                    yield ""
+
+        return R()
+
+    lines = []
+    handler = logging.Handler()
+    handler.emit = lambda record: lines.append(record.getMessage())
+    blog = logging.getLogger("hub.brain")
+    blog.addHandler(handler)
+    brain_requests.post = stall_post
+    os.environ["HTTPS_PROXY"] = "http://secret-user:secret-pass@proxy.example:8080"
+    try:
+        stalled = Brain(store, disp, key_getter=lambda: FAKE_KEY, timeout=0.5)
+        reply = await stalled.handle("How do I slice a pomegranate?")
+        blob = "\n".join(lines)
+        check(reply.speech == OFFLINE and reply.llm_ttft_ms is not None, (reply.speech, reply.llm_ttft_ms, blob))
+        check(not stalled.breaker.is_open() and stalled.breaker.fails == 0, "stall counted")
+        check("stage=first-token" in blob and "http=200" in blob, blob)
+        check("dns=ipv4=1,ipv6=0" in blob and "key=keychain" in blob, blob)
+        check("proxy=http://proxy.example:8080" in blob, blob)
+        check("loop_pulses=" in blob and "loop_gap_ms=" in blob, blob)
+        check(FAKE_KEY not in blob and "secret-user" not in blob and "secret-pass" not in blob, "secret in the failure log")
+    finally:
+        os.environ.pop("HTTPS_PROXY", None)
+        brain_requests.post = real_post
+        brain_core._families = real_families
+        blog.removeHandler(handler)
+    print("PASS stall log names the stage")
 
     class Client:
         def __init__(self):

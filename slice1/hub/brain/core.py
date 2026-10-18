@@ -2,17 +2,22 @@
 
 Transport-neutral. handle() returns a Reply and does not know about the BOX-3.
 """
-import asyncio, json, logging, os, re, threading, time
+import asyncio, contextvars, json, logging, os, re, socket, threading, time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
+from requests.exceptions import Timeout as RequestsTimeout
 
 from brain.key import get_key
 from brain.tools import BY_NAME, ToolContext, responses_tools
 
 log = logging.getLogger("hub.brain")
 URL = "https://api.x.ai/v1/responses"
+_API_HOST = "api.x.ai"
+_trace_var = contextvars.ContextVar("brain_trace", default=None)
+_announced = False
 OFFLINE = "Connection unavailable."
 PERSONA_PATH = Path(__file__).with_name("persona.md")
 _SENT = re.compile(r"(.+?[.!?])(?:\s+|$)")
@@ -117,8 +122,10 @@ class Breaker:
         self.open_until = 0.0
 
 
-def iter_sse(resp):
+def iter_sse(resp, trace=None):
     for raw in resp.iter_lines(decode_unicode=True):
+        if trace is not None:
+            trace.mark("first-byte")
         if not raw:
             continue
         line = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
@@ -140,13 +147,193 @@ def iter_sse(resp):
             log.warning("brain stream skipped a non-json line")
 
 
+def _proxy_label() -> str:
+    """Proxy host only. Userinfo in the URL is never logged."""
+    seen = []
+    for name in ("https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "http_proxy", "HTTP_PROXY"):
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = urlparse(raw if "://" in raw else "http://" + raw)
+            if not parsed.hostname:
+                host = "set"
+            else:
+                host = f"{parsed.scheme}://{parsed.hostname}"
+                if parsed.port:
+                    host += f":{parsed.port}"
+        except Exception:
+            host = "set"
+        if host not in seen:
+            seen.append(host)
+    return ",".join(seen) if seen else "off"
+
+
+def _families(host, port=443) -> str:
+    """Address-family counts for host. No addresses are logged."""
+    infos = socket.getaddrinfo(host, port, socket.SOCK_STREAM)
+    v4 = sum(1 for item in infos if item[0] == socket.AF_INET)
+    v6 = sum(1 for item in infos if item[0] == socket.AF_INET6)
+    return f"ipv4={v4},ipv6={v6}"
+
+
+def _install_ipv4_first():
+    """Try IPv4 before IPv6 for urllib3 only.
+
+    urllib3 walks getaddrinfo order and gives each address the full connect
+    timeout. A blackholed IPv6 route (common when a shell has a proxy and a
+    LaunchAgent does not) can spend the whole turn before the first header.
+    The TLS hostname stays the URL host; only the attempt order changes.
+    """
+    import urllib3.util.connection as cn
+    if getattr(cn, "_womble_ipv4_first", False):
+        return
+
+    def create_connection(address, timeout=cn._DEFAULT_TIMEOUT, source_address=None, socket_options=None):
+        host, port = address
+        if isinstance(host, str) and host.startswith("["):
+            host = host.strip("[]")
+        try:
+            host.encode("idna")
+        except UnicodeError:
+            raise cn.LocationParseError(f"'{host}', label empty or too long") from None
+        family = cn.allowed_gai_family()
+        infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+        infos.sort(key=lambda item: item[0] != socket.AF_INET)
+        err = None
+        for af, socktype, proto, _canon, sa in infos:
+            sock = None
+            try:
+                sock = socket.socket(af, socktype, proto)
+                cn._set_socket_options(sock, socket_options)
+                if timeout is not cn._DEFAULT_TIMEOUT:
+                    sock.settimeout(timeout)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sa)
+                return sock
+            except OSError as exc:
+                err = exc
+                if sock is not None:
+                    sock.close()
+        if err is not None:
+            raise err
+        raise OSError("getaddrinfo returns an empty list")
+
+    cn.create_connection = create_connection
+    cn._womble_ipv4_first = True
+
+
+class TurnTrace:
+    """Stages updated from the request thread, so a cancelled turn can still say where it stuck.
+
+    The asyncio timeout used to log llm_ttft_ms=- even after tokens had arrived:
+    that number lived only inside the task wait_for had just cancelled.
+    """
+
+    def __init__(self):
+        self.stage = "start"
+        self.http_status = None
+        self.worker_ttft_ms = None
+        self.loop_ttft_ms = None
+        self.dns = None
+        self.proxy = _proxy_label()
+        self.key_source = None
+        self.pulses = 0
+        self.max_gap_ms = 0
+        self._prev = time.perf_counter()
+        self.t0 = self._prev
+        self._lock = threading.Lock()
+
+    def mark(self, stage, http_status=None):
+        with self._lock:
+            if stage == "first-byte" and self.stage != "status":
+                return
+            now = int((time.perf_counter() - self.t0) * 1000)
+            if stage == "first-token" and self.worker_ttft_ms is None:
+                self.worker_ttft_ms = now
+            self.stage = stage
+            if http_status is not None:
+                self.http_status = http_status
+            self.elapsed_ms = now
+
+    def note_loop_ttft(self, ms):
+        with self._lock:
+            if self.loop_ttft_ms is None:
+                self.loop_ttft_ms = ms
+
+    def pulse(self):
+        now = time.perf_counter()
+        with self._lock:
+            gap = int((now - self._prev) * 1000)
+            self._prev = now
+            self.pulses += 1
+            if gap > self.max_gap_ms:
+                self.max_gap_ms = gap
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "stage": self.stage,
+                "http": "-" if self.http_status is None else str(self.http_status),
+                "worker_ttft_ms": self.worker_ttft_ms,
+                "loop_ttft_ms": self.loop_ttft_ms,
+                "dns": self.dns or "-",
+                "proxy": self.proxy,
+                "key": self.key_source or "-",
+                "loop_pulses": self.pulses,
+                "loop_gap_ms": self.max_gap_ms,
+            }
+
+
+def _fmt_ms(value):
+    return "-" if value is None else str(value)
+
+
+def _announce(trace: TurnTrace):
+    """Once per process: the environment a LaunchAgent has and a shell may not."""
+    global _announced
+    if _announced:
+        return
+    _announced = True
+    log.info("brain transport proxy=%s key=%s", trace.proxy, trace.key_source)
+
+
+def _timeout_exc(exc) -> bool:
+    """True for our budget, asyncio.wait_for, and a requests connect/read timeout."""
+    return isinstance(exc, (TimeoutError, RequestsTimeout))
+
+
+def iter_sse_marked(resp, trace):
+    """iter_sse, but the request thread records first byte and first text token."""
+    for ev in iter_sse(resp, trace):
+        if trace is not None and ev.get("type") == "response.output_text.delta" and (ev.get("delta") or ""):
+            trace.mark("first-token")
+        yield ev
+
+
 async def default_transport(payload: dict, key: str, timeout: float):
-    """Stream SSE events from the Responses API. The key stays in the header only."""
+    """Stream SSE events from the Responses API. The key stays in the header only.
+
+    Events are handed to the loop with call_soon_threadsafe. Stage marks are
+    written on the request thread, because a timeout cancels the consumer
+    while this thread may still be blocked in DNS, connect, or iter_lines.
+    """
     loop = asyncio.get_running_loop()
     queue = asyncio.Queue()
+    trace = _trace_var.get()
+    _install_ipv4_first()
 
     def worker():
         try:
+            if trace is not None:
+                trace.mark("dns")
+                try:
+                    trace.dns = _families(_API_HOST)
+                except Exception:
+                    trace.mark("dns-error")
+                    raise
+                trace.mark("connect")
             with requests.post(
                 URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -154,10 +341,12 @@ async def default_transport(payload: dict, key: str, timeout: float):
                 stream=True,
                 timeout=(min(3.0, timeout), timeout),
             ) as resp:
+                if trace is not None:
+                    trace.mark("status", http_status=resp.status_code)
                 if resp.status_code != 200:
                     loop.call_soon_threadsafe(queue.put_nowait, ("status", resp.status_code))
                     return
-                for ev in iter_sse(resp):
+                for ev in iter_sse_marked(resp, trace):
                     loop.call_soon_threadsafe(queue.put_nowait, ("ev", ev))
         except Exception as exc:
             try:
@@ -219,12 +408,12 @@ class Brain:
         self.clock = clock or time.time
         self.memory = memory or Memory(clock=self.clock)
         self.breaker = breaker or Breaker(clock=self.clock)
-        self.timeout = float(timeout if timeout is not None else os.environ.get("BRAIN_TIMEOUT_S", "4"))
+        self.timeout = float(timeout if timeout is not None else os.environ.get("BRAIN_TIMEOUT_S", "8"))
         self.persona = persona if persona is not None else load_persona()
         self.model = os.environ.get("BRAIN_MODEL", "grok-4.7")
         self.max_output_tokens = int(os.environ.get("BRAIN_MAX_OUTPUT_TOKENS", "200"))
 
-    def _payload(self, items) -> dict:
+    def _payload(self, items, text) -> dict:
         return {
             "model": self.model,
             "reasoning": {"effort": "low"},
@@ -233,7 +422,7 @@ class Brain:
             "stream": True,
             "instructions": self.persona,
             "input": items,
-            "tools": responses_tools(),
+            "tools": responses_tools(text=text),
         }
 
     async def _emit_down(self):
@@ -251,41 +440,82 @@ class Brain:
                      card={"type": "text", "title": "Womble", "body": OFFLINE},
                      llm_ttft_ms=ttft, llm_total_ms=total)
 
-    async def _fail(self, t0, ttft, exc) -> Reply:
-        opened = self.breaker.failure()
+    async def _pulse(self, trace: TurnTrace):
+        while True:
+            trace.pulse()
+            await asyncio.sleep(0.25)
+
+    def _failure_line(self, exc) -> str:
+        trace = _trace_var.get()
+        if exc is None:
+            why = "no-key"
+        else:
+            detail = str(exc).strip()
+            why = type(exc).__name__ if not detail else f"{type(exc).__name__}: {detail}"
+        if trace is None:
+            return why
+        snap = trace.snapshot()
+        ttft = snap["loop_ttft_ms"] if snap["loop_ttft_ms"] is not None else snap["worker_ttft_ms"]
+        return (
+            f"{why} stage={snap['stage']} http={snap['http']} "
+            f"ttft_ms={_fmt_ms(ttft)} worker_ttft_ms={_fmt_ms(snap['worker_ttft_ms'])} "
+            f"dns={snap['dns']} proxy={snap['proxy']} key={snap['key']} "
+            f"loop_pulses={snap['loop_pulses']} loop_gap_ms={snap['loop_gap_ms']}"
+        )
+
+    async def _fail(self, t0, ttft, exc, *, count_breaker=True) -> Reply:
+        # A timeout speaks the offline line and stops there. Counting it would
+        # open the circuit after a few slow turns and then fail the next ones
+        # without calling xAI at all.
+        opened = self.breaker.failure() if count_breaker else False
+        log.warning("brain failed (%s)", self._failure_line(exc))
         if opened:
             log.warning("brain circuit open for %.0fs", self.breaker.cooldown)
-        else:
-            log.warning("brain failed (%s)", type(exc).__name__ if exc is not None else "no-key")
         await self._emit_down()
+        trace = _trace_var.get()
+        if ttft is None and trace is not None:
+            snap = trace.snapshot()
+            ttft = snap["loop_ttft_ms"] if snap["loop_ttft_ms"] is not None else snap["worker_ttft_ms"]
         return self._down(t0, ttft)
 
     async def handle(self, text, source="box3-kitchen", session=None, on_sentence=None) -> Reply:
         """Answer one utterance. on_sentence(text) is sync and may be called mid-stream."""
         session = session or source
         t0 = time.perf_counter()
-        ttft = None
         if self.breaker.is_open():
             await self._emit_down()
             return self._down(t0, None)
+        trace = TurnTrace()
+        trace.key_source = "env" if os.environ.get("XAI_BRAIN_API_KEY", "").strip() else "keychain"
+        _announce(trace)
+        token = _trace_var.set(trace)
+        pulse = asyncio.create_task(self._pulse(trace))
         try:
-            key = self.key_getter()
-        except Exception as e:
-            return await self._fail(t0, None, e)
-        if not key:
-            return await self._fail(t0, None, None)
-        try:
-            reply = await asyncio.wait_for(
-                self._handle(text, source, session, key, t0, on_sentence),
-                timeout=self.timeout,
-            )
-        except asyncio.TimeoutError:
-            return await self._fail(t0, ttft, TimeoutError())
-        except Exception as e:
-            return await self._fail(t0, ttft, e)
-        return reply
+            try:
+                key = await asyncio.to_thread(self.key_getter)
+            except Exception as e:
+                return await self._fail(t0, None, e)
+            if not key:
+                return await self._fail(t0, None, None)
+            try:
+                reply = await asyncio.wait_for(
+                    self._handle(text, source, session, key, t0, on_sentence, trace),
+                    timeout=self.timeout,
+                )
+            except asyncio.TimeoutError as e:
+                return await self._fail(t0, None, e, count_breaker=False)
+            except Exception as e:
+                return await self._fail(t0, None, e, count_breaker=not _timeout_exc(e))
+            return reply
+        finally:
+            pulse.cancel()
+            try:
+                await pulse
+            except asyncio.CancelledError:
+                pass
+            _trace_var.reset(token)
 
-    async def _handle(self, text, source, session, key, t0, on_sentence) -> Reply:
+    async def _handle(self, text, source, session, key, t0, on_sentence, trace) -> Reply:
         ctx = ToolContext(text, source, session, self.store, self.display)
         items = list(self.memory.history(session))
         items.append({"role": "user", "content": text})
@@ -298,6 +528,7 @@ class Brain:
             if delta:
                 if ttft is None:
                     ttft = int((time.perf_counter() - t0) * 1000)
+                    trace.note_loop_ttft(ttft)
                 pending += delta
                 ready, pending = pop_sentences(pending)
                 for sentence in ready:
@@ -317,7 +548,8 @@ class Brain:
             remaining = deadline - time.perf_counter()
             if remaining <= 0.2:
                 raise TimeoutError("brain budget")
-            response, seen_calls, streamed = await self._round(items, key, min(self.timeout, remaining), push)
+            response, seen_calls, streamed = await self._round(
+                items, key, min(self.timeout, remaining), push, text)
             calls = _function_calls(response, seen_calls)
             if streamed and not parts and not pending:
                 push(streamed)
@@ -359,11 +591,11 @@ class Brain:
                      reprompt=None if end_session else "Anything else?",
                      card=ctx.card, category="brain", llm_ttft_ms=ttft, llm_total_ms=total)
 
-    async def _round(self, items, key, timeout, push):
+    async def _round(self, items, key, timeout, push, text):
         response = None
         seen = []
         streamed = []
-        async for ev in self.transport(self._payload(items), key, timeout):
+        async for ev in self.transport(self._payload(items, text), key, timeout):
             typ = ev.get("type")
             if typ == "response.output_text.delta":
                 delta = ev.get("delta") or ""
