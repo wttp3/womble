@@ -95,27 +95,16 @@
           "name": "QuestionIntent",
           "slots": [
             {
+              "name": "ask",
+              "type": "WombleAsk"
+            },
+            {
               "name": "query",
               "type": "AMAZON.SearchQuery"
             }
           ],
           "samples": [
-            "what {query}",
-            "what's {query}",
-            "what is {query}",
-            "what about {query}",
-            "how {query}",
-            "how do I {query}",
-            "why {query}",
-            "when {query}",
-            "who {query}",
-            "is {query}",
-            "can {query}",
-            "should {query}",
-            "research {query}",
-            "tell me about {query}",
-            "tell me {query}",
-            "and {query}"
+            "{ask} {query}"
           ]
         },
         {
@@ -147,7 +136,29 @@
           "samples": []
         }
       ],
-      "types": []
+      "types": [
+        {
+          "name": "WombleAsk",
+          "values": [
+            { "name": { "value": "what" } },
+            { "name": { "value": "what's" } },
+            { "name": { "value": "what is" } },
+            { "name": { "value": "what about" } },
+            { "name": { "value": "how" } },
+            { "name": { "value": "how do I" } },
+            { "name": { "value": "why" } },
+            { "name": { "value": "when" } },
+            { "name": { "value": "who" } },
+            { "name": { "value": "is" } },
+            { "name": { "value": "can" } },
+            { "name": { "value": "should" } },
+            { "name": { "value": "research" } },
+            { "name": { "value": "tell me about" } },
+            { "name": { "value": "tell me" } },
+            { "name": { "value": "and" } }
+          ]
+        }
+      ]
     }
   }
 }

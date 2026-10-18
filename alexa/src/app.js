@@ -61,11 +61,36 @@ async function sendProgressive(body, fetchImpl) {
   }
 }
 
+function squash(text) {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+// Apostrophe counts as a boundary so "what" matches the start of "what's …".
+function phraseAtStart(text, phrase) {
+  const fold = (s) => s.toLowerCase().replace(/[\u2018\u2019\u201B\u2032]/g, "'");
+  const t = fold(text);
+  const p = fold(phrase);
+  if (!p || t.length < p.length || !t.startsWith(p)) return false;
+  if (t.length === p.length) return true;
+  return /[\s,?.!;:'"]/.test(t[p.length]);
+}
+
+// QuestionIntent splits the carrier into `ask` and the rest into `query`.
+// A SearchQuery that already begins with that carrier is left unchanged.
+export function joinQuestion(ask, query) {
+  const a = squash(ask);
+  const q = squash(query);
+  if (!q) return a;
+  if (!a || phraseAtStart(q, a)) return q;
+  return `${a} ${q}`;
+}
+
 function intentText(name, intent) {
   if (name === "AMAZON.YesIntent") return "yes";
   if (name === "AMAZON.NoIntent") return "no";
   if (name !== "CaptureIntent" && name !== "QuestionIntent" && !(name in CARRIER_INTENTS)) return null;
   const q = (intent?.slots?.query?.value || "").trim();
+  if (name === "QuestionIntent") return joinQuestion(intent?.slots?.ask?.value, q);
   if (!q) return "";
   if (CARRIER_INTENTS[name]) return `${CARRIER_INTENTS[name]} ${q}`;
   return q;

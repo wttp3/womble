@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as x509 from "@peculiar/x509";
 import worker, { HubLink } from "../src/index.js";
-import { handle } from "../src/app.js";
+import { handle, joinQuestion } from "../src/app.js";
 import { verifyAlexaRequest, verifyChain, checkCertUrl } from "../src/verify.js";
 import { authorizeHub, routeHub, tokensEqual, toSsml, FRAME_LINE, PROGRESSIVE_LINE, STALE_MS, HUB_OBJECT_NAME } from "../src/hub_link.js";
 
@@ -331,6 +331,41 @@ const qBefore = sent.length;
   assert.equal(sent.at(-1).text, "add milk");
   assert.equal(sent.at(-1).requestId, b.request.requestId);
   ok("cutoff speaks the frame line, enqueues, and has already said one moment");
+}
+
+assert.equal(joinQuestion("how do I", "slice a mango"), "how do I slice a mango");
+assert.equal(joinQuestion("why", "slice a mango"), "why slice a mango");
+assert.equal(joinQuestion("is", "it safe to leave butter out"), "is it safe to leave butter out");
+assert.equal(joinQuestion("what's", "a substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(joinQuestion("what about", "for scones"), "what about for scones");
+assert.equal(joinQuestion("tell me about", "mangoes"), "tell me about mangoes");
+assert.equal(joinQuestion("and", "for scones"), "and for scones");
+assert.equal(joinQuestion("How do I", "slice a mango"), "How do I slice a mango");
+assert.equal(joinQuestion("what's", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(joinQuestion("how", "how do I slice a mango"), "how do I slice a mango");
+assert.equal(joinQuestion("what", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(joinQuestion("why", "why slice a mango"), "why slice a mango");
+assert.equal(joinQuestion("", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(joinQuestion("is", "island breakfast"), "is island breakfast");
+ok("question rebuild keeps the carrier and leaves a full SearchQuery unchanged");
+
+{
+  const hub = fakeHub({ connected: false });
+  const b = withApi(alexaBody({ intent: { name: "QuestionIntent", slots: {
+    ask: { name: "ask", value: "how do I" },
+    query: { name: "query", value: "slice a mango" },
+  } } }));
+  r = await handle(post(b), env, passVerify, { hub: hub.ns, progressiveMs: 500, cutoffMs: 800, fetch: async () => { throw new Error("progressive should not run"); } });
+  assert.equal(sent.at(-1).text, "how do I slice a mango");
+  assert.equal(hub.seen[0].text, "how do I slice a mango");
+  const full = withApi(alexaBody({ intent: { name: "QuestionIntent", slots: {
+    ask: { name: "ask", value: "why" },
+    query: { name: "query", value: "why slice a mango" },
+  } } }));
+  const hubFull = fakeHub({ connected: false });
+  r = await handle(post(full), env, passVerify, { hub: hubFull.ns, progressiveMs: 500, cutoffMs: 800 });
+  assert.equal(hubFull.seen[0].text, "why slice a mango");
+  ok("QuestionIntent sends the rebuilt question to the hub and the queue");
 }
 assert.ok(sent.length >= qBefore);
 console.log(`ALL ${n} PASSED`);

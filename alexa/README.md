@@ -31,7 +31,7 @@ The signature, timestamp and skill-id checks are unchanged. After they pass:
 - **Hub offline**, or the heartbeat is older than 30 s: today's path. Enqueue the job and say "On it."
 - Spoken text is plain, SSML-escaped, and capped well under 8000 characters. Observability stays off. The worker log line is `alexa hub wait_ms=… outcome=…` and does not include the words.
 
-`AMAZON.SearchQuery` keeps the words after the carrier and drops the carrier itself, so "what's a substitute for buttermilk" arrives as "a substitute for buttermilk". Session memory on the hub (`alexa:<sessionId>`, or `alexa:<room>` when there is no session id) is what makes "what about for scones" follow on. Yes and No send the words `yes` and `no` down the same path.
+`QuestionIntent` splits the utterance into `ask` (`WombleAsk`) and `query` (`AMAZON.SearchQuery`). The worker joins them back, so "how do I slice a mango" and "why slice a mango" stay different questions, and "is it safe to…" keeps its "is". A query that already starts with that ask phrase is sent unchanged. Session memory on the hub (`alexa:<sessionId>`, or `alexa:<room>` when there is no session id) carries the follow-up. Yes and No send the words `yes` and `no` down the same path.
 
 ## Andrew: steps to finish
 
@@ -73,7 +73,7 @@ The skill already exists. Do not create another one, and do not change the endpo
 
 What the pasted model adds, on top of Add, Find, Save, Remember, Capture, Help, Stop, Cancel, NavigateHome and Fallback:
 
-- **QuestionIntent**, slot `query` of type `AMAZON.SearchQuery`. Samples, each a carrier plus `{query}`: what, what's, what is, what about, how, how do I, why, when, who, is, can, should, research, tell me about, tell me, and.
+- **QuestionIntent**, slots `ask` (`WombleAsk`) and `query` (`AMAZON.SearchQuery`). The sample is `{ask} {query}`. `WombleAsk` values are: what, what's, what is, what about, how, how do I, why, when, who, is, can, should, research, tell me about, tell me, and. The worker rebuilds `${ask} ${query}`.
 - **AMAZON.YesIntent** and **AMAZON.NoIntent**, built-in, with empty sample lists (Amazon supplies the utterances).
 
 ### 5. Create the Cloudflare queue token (you type the secret; it never goes in a file)
