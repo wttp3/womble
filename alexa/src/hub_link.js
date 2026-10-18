@@ -169,7 +169,8 @@ export class HubLink {
     if (!ws) return Response.json({ offline: true });
     const payload = {
       id,
-      text: job.text ?? "",
+      text: job.text || job.question || "",
+      intent: job.intent ?? null,
       deviceId: job.deviceId ?? null,
       sessionId: job.sessionId ?? null,
       locale: job.locale ?? null,

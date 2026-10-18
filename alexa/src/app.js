@@ -111,15 +111,76 @@ export function joinQuestion(ask, query) {
   return `${a} ${q}`;
 }
 
-function intentText(name, intent) {
+function samePhrase(a, b) {
+  const fold = (s) => squash(s).toLowerCase().replace(/[\u2018\u2019\u201B\u2032]/g, "'");
+  return fold(a) === fold(b);
+}
+
+// Spoken text, not a resolved entity URL. `value` and `slotValue` can disagree;
+// the longer one is the phrase Alexa actually heard.
+export function slotPhrase(slot) {
+  const found = [];
+  const add = (v) => {
+    if (typeof v !== "string") return;
+    const s = squash(v);
+    if (!s || /^https?:\/\//i.test(s)) return;
+    found.push(s);
+  };
+  if (slot && typeof slot === "object") {
+    add(slot.value);
+    const sv = slot.slotValue;
+    if (sv && typeof sv === "object") {
+      add(sv.value);
+      if (Array.isArray(sv.values)) {
+        for (const item of sv.values) add(item?.value);
+        add(sv.values.map((item) => squash(item?.value || "")).filter(Boolean).join(" "));
+      }
+    }
+  }
+  return found.reduce((best, s) => (s.length > best.length ? s : best), "");
+}
+
+function querySlot(intent) {
+  const slots = intent?.slots;
+  if (!slots) return null;
+  if (Array.isArray(slots)) return slots.find((s) => s?.name === "query") || null;
+  return slots.query || null;
+}
+
+// "what {query}" steals "what's a…", leaving the slot as "s a…". Put the contraction back.
+function carrierFor(name, query) {
+  if (name === "AskWhatIntent" && /^(?:['’]s|s)\b/i.test(query)) return "what's";
+  return ASK_CARRIERS[name];
+}
+
+function queryRemainder(name, query) {
+  if (name === "AskWhatIntent" && /^(?:['’]s|s)\b/i.test(query))
+    return squash(query.replace(/^(?:['’]s|s)\b\s*/i, ""));
+  return query;
+}
+
+export function intentText(name, intent) {
   if (name === "AMAZON.YesIntent") return "yes";
   if (name === "AMAZON.NoIntent") return "no";
   if (!(name in ASK_CARRIERS) && name !== "CaptureIntent" && !(name in CARRIER_INTENTS)) return null;
-  const q = (intent?.slots?.query?.value || "").trim();
+  const q = slotPhrase(querySlot(intent));
   if (!q) return "";
-  if (name in ASK_CARRIERS) return joinQuestion(ASK_CARRIERS[name], q);
+  if (name in ASK_CARRIERS) {
+    const carrier = carrierFor(name, q);
+    const rest = queryRemainder(name, q);
+    if (!rest) return "";
+    const joined = joinQuestion(carrier, rest);
+    // The carrier alone ("what's") makes the brain ask what they meant.
+    if (samePhrase(joined, carrier)) return "";
+    return joined;
+  }
   if (CARRIER_INTENTS[name]) return `${CARRIER_INTENTS[name]} ${q}`;
   return q;
+}
+
+function logField(text, max) {
+  const s = squash(text).replace(/https?:\/\/\S+/gi, "");
+  return s.length <= max ? s : s.slice(0, max);
 }
 
 async function enqueue(env, job) {
@@ -150,6 +211,7 @@ async function speakJob(body, req, env, name, text, deps) {
   const hubJob = {
     id: req.requestId,
     text,
+    intent: name,
     deviceId,
     sessionId,
     locale: req.locale || null,
@@ -187,9 +249,9 @@ async function speakJob(body, req, env, name, text, deps) {
   }
 
   const answer = outcome.kind === "hub" ? outcome.answer : null;
-  // Duration only. Spoken text is never logged.
   const why = answer?.offline ? "offline" : answer?.timeout ? "timeout" : outcome.kind;
-  console.log(`alexa hub wait_ms=${Date.now() - started} outcome=${why}`);
+  // Question text is logged. Tokens and URLs are not.
+  console.log(`alexa intent=${name} query=${logField(deps.rawQuery, 120)} text=${logField(text, 120)} outcome=${why} wait_ms=${Date.now() - started}`);
   if (answer && answer.offline) {
     return (await enqueue(env, queueJob)) ? json(say("On it.")) : unreachable();
   }
@@ -237,9 +299,13 @@ export async function handle(request, env, verify, deps = {}) {
     return json(say("OK."));
   if (name === "AMAZON.FallbackIntent")
     return json(say("Sorry, say it starting with add, find or save.", false, "What do you need?"));
+  const rawQuery = slotPhrase(querySlot(req.intent));
   const text = intentText(name, req.intent);
   if (text === null)
     return json(say("Sorry, say it starting with add, find or save.", false, "What do you need?"));
-  if (!text) return json(say("Sorry, I didn't catch that. What do you need?", false, "What do you need?"));
-  return speakJob(body, req, env, name, text, deps);
+  if (!text) {
+    console.log(`alexa intent=${name} query=${logField(rawQuery, 120)} text= outcome=empty`);
+    return json(say("Sorry, I didn't catch that. What do you need?", false, "What do you need?"));
+  }
+  return speakJob(body, req, env, name, text, { ...deps, rawQuery });
 }

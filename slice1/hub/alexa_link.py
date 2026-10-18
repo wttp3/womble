@@ -147,18 +147,34 @@ class AlexaLink:
             }
         return reply
 
+    def _log_job(self, job: dict, text: str, session: str, reply: dict) -> None:
+        speech = plain_speech(reply.get("speech"))[:80]
+        # Question text is logged, same as a BOX-3 transcript. No tokens or URLs.
+        log.info(
+            "alexa job intent=%s text=%s session=%s speech=%s end_session=%s",
+            job.get("intent") or "-",
+            text,
+            session,
+            speech,
+            bool(reply.get("end_session", True)),
+        )
+
     async def handle_job(self, job: dict) -> dict:
         rid = job.get("id") or job.get("requestId")
+        text = (job.get("text") or job.get("question") or "").strip()
+        dev, new = self.devices.lookup(job.get("deviceId"))
+        room = dev.get("room", "Echo")
+        session = session_key(job.get("sessionId"), room)
         if rid and rid in self._answers:
             cached = dict(self._answers[rid])
             cached["id"] = rid
+            self._log_job(job, text, session, cached)
             return cached
-        text = (job.get("text") or "").strip()
-        dev, new = self.devices.lookup(job.get("deviceId"))
-        room = dev.get("room", "Echo")
         if rid:
             if rid in self.seen:
-                return {"id": rid, "speech": "OK.", "end_session": True}
+                reply = {"id": rid, "speech": "OK.", "end_session": True}
+                self._log_job(job, text, session, reply)
+                return reply
             self.seen.add(rid)
         duplicate = bool(text) and not claim_recent(self.recent, text)
         recv = time.perf_counter()
@@ -174,7 +190,7 @@ class AlexaLink:
                 res = {"category": "deduped", "speech": "OK.", "end_session": True,
                        "card": {"type": "text", "title": "", "body": ""}}
             else:
-                res = await self._answer(text, room, session_key(job.get("sessionId"), room))
+                res = await self._answer(text, room, session)
             model_ms = int((time.perf_counter() - started) * 1000)
             if not duplicate:
                 await show_alexa_result(self.disp, self.push_card, job, res, dev, new, room)
@@ -187,6 +203,7 @@ class AlexaLink:
             self._answers[rid] = reply
         hop_ms = max(0, int((time.perf_counter() - recv) * 1000 - model_ms - int(delay * 1000)))
         log.info("alexa link hop_ms=%d model_ms=%d", hop_ms, model_ms)
+        self._log_job(job, text, session, reply)
         return reply
 
     async def _on_text(self, ws, data: str):
@@ -204,6 +221,8 @@ class AlexaLink:
             log.warning("alexa link job failed (%s)", type(e).__name__)
             reply = {"id": job.get("id") or job.get("requestId"), "speech": "Connection unavailable.",
                      "end_session": True}
+            self._log_job(job, (job.get("text") or job.get("question") or "").strip(),
+                          session_key(job.get("sessionId"), "Echo"), reply)
         await ws.send_str(json.dumps(reply))
 
     async def _ping(self, ws):

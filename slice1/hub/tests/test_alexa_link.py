@@ -115,6 +115,35 @@ async def test_protocol_and_dedupe(tmp):
     assert slow["speech"] == "Use yogurt." and elapsed >= 0.05, elapsed
     print("PASS ALEXA_LINK_TEST_DELAY_S holds the answer")
 
+    logs = []
+    grab = logging.Handler()
+    grab.emit = lambda record: logs.append(record.getMessage())
+    al.log.addHandler(grab)
+    try:
+        heard = await obj.handle_job(job(
+            id="r-question", text="", question="what's a substitute for buttermilk",
+            intent="AskWhatsIntent", sessionId="sess-9",
+        ))
+        assert heard["speech"] == "Use yogurt." and heard["end_session"] is True
+        assert brain.calls[-1]["text"] == "what's a substitute for buttermilk"
+        line = next(l for l in logs if l.startswith("alexa job "))
+        assert "intent=AskWhatsIntent" in line, line
+        assert "text=what's a substitute for buttermilk" in line, line
+        assert "session=alexa:sess-9" in line, line
+        assert "speech=Use yogurt." in line and "end_session=True" in line, line
+        obj._log_job(
+            {"intent": "AskWhatIntent"},
+            "what a substitute for buttermilk",
+            "alexa:sess-9",
+            {"speech": "Y" * 120, "end_session": False},
+        )
+        clipped = logs[-1]
+        assert f"speech={'Y' * 80}" in clipped and "Y" * 81 not in clipped, clipped
+        assert "end_session=False" in clipped
+    finally:
+        al.log.removeHandler(grab)
+    print("PASS hub logs the question and reads question when text is empty")
+
 
 def test_url_and_token(tmp):
     assert al.worker_ws_url("https://worker.example/hub") == "wss://worker.example/hub"

@@ -174,7 +174,7 @@ const pending = link.fetch(new Request("https://hub.internal/dispatch", { method
 await new Promise((r) => setTimeout(r, 0));
 assert.equal(ws3.sent.length, 1);
 const pushed = JSON.parse(ws3.sent[0]);
-assert.deepEqual(pushed, jobBody);
+assert.deepEqual(pushed, { ...jobBody, intent: null });
 await link.webSocketMessage(ws3, "ping");
 await link.webSocketMessage(ws3, JSON.stringify({ id: "other", speech: "nope", end_session: true }));
 assert.equal(link.pending.has("job-1"), true);
@@ -390,7 +390,9 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
   assert.deepEqual(new Set(askNames), new Set(Object.keys(ASK_CARRIERS)));
   for (const intent of lang.intents) {
     if (!(intent.name in ASK_CARRIERS)) continue;
-    assert.deepEqual(intent.samples, [`${ASK_CARRIERS[intent.name]} {query}`]);
+    const literals = intent.samples.map((sample) => sample.slice(0, -" {query}".length));
+    assert.ok(literals.includes(ASK_CARRIERS[intent.name]), intent.name);
+    assert.ok(literals.every((literal) => literal && !literal.includes("{")), intent.samples);
   }
   ok("interaction model: one SearchQuery slot, a literal carrier, no shared samples");
 }
@@ -410,6 +412,102 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
   r = await handle(post(different), env, passVerify, { hub: hubWhy.ns, progressiveMs: 500, cutoffMs: 800 });
   assert.equal(hubWhy.seen[0].text, "why slice a mango");
   ok("ask intents send the rebuilt question to the hub and the queue");
+}
+
+{
+  // Shape of a live IntentRequest: the heard words are under slotValue, and `value` is absent.
+  const lines = [];
+  const orig = console.log;
+  console.log = (...args) => { lines.push(args.join(" ")); };
+  const request = {
+    version: "1.0",
+    session: {
+      new: true,
+      sessionId: "amzn1.echo-api.session.buttermilk",
+      application: { applicationId: SKILL },
+      user: { userId: "amzn1.ask.account.TEST" },
+    },
+    context: {
+      System: {
+        application: { applicationId: SKILL },
+        user: { userId: "amzn1.ask.account.TEST" },
+        device: { deviceId: "amzn1.ask.device.TEST", supportedInterfaces: {} },
+        apiEndpoint: "https://api.eu.amazonalexa.com",
+        apiAccessToken: "atk-live",
+      },
+    },
+    request: {
+      type: "IntentRequest",
+      requestId: "amzn1.echo-api.request.buttermilk",
+      timestamp: new Date().toISOString(),
+      locale: "en-GB",
+      intent: {
+        name: "AskWhatIntent",
+        confirmationStatus: "NONE",
+        slots: {
+          query: {
+            name: "query",
+            confirmationStatus: "NONE",
+            source: "USER",
+            slotValue: { type: "Simple", value: "a substitute for buttermilk" },
+          },
+        },
+      },
+    },
+  };
+  try {
+    const hub = fakeHub({ connected: false });
+    r = await handle(post(request), env, passVerify, { hub: hub.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hub.seen[0].text, "what a substitute for buttermilk");
+    assert.equal(hub.seen[0].intent, "AskWhatIntent");
+    assert.equal(sent.at(-1).text, "what a substitute for buttermilk");
+    const line = lines.find((l) => l.startsWith("alexa intent="));
+    assert.match(line, /intent=AskWhatIntent/);
+    assert.match(line, /query=a substitute for buttermilk/);
+    assert.match(line, /text=what a substitute for buttermilk/);
+    assert.match(line, /outcome=offline/);
+    assert.equal(line.includes("atk-live"), false);
+
+    const stolen = structuredClone(request);
+    stolen.request.requestId = "amzn1.echo-api.request.stolen";
+    stolen.request.intent.slots.query = {
+      name: "query", value: "s a substitute for buttermilk", confirmationStatus: "NONE", source: "USER",
+    };
+    const hubStolen = fakeHub({ connected: false });
+    r = await handle(post(stolen), env, passVerify, { hub: hubStolen.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hubStolen.seen[0].text, "what's a substitute for buttermilk");
+
+    const partial = structuredClone(request);
+    partial.request.requestId = "amzn1.echo-api.request.partial";
+    partial.request.intent.name = "AskWhatsIntent";
+    partial.request.intent.slots.query = {
+      name: "query",
+      value: "what's",
+      confirmationStatus: "NONE",
+      source: "USER",
+      slotValue: { type: "Simple", value: "a substitute for buttermilk" },
+    };
+    const hubPartial = fakeHub({ connected: false });
+    r = await handle(post(partial), env, passVerify, { hub: hubPartial.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hubPartial.seen[0].text, "what's a substitute for buttermilk");
+
+    const alone = structuredClone(request);
+    alone.request.requestId = "amzn1.echo-api.request.alone";
+    alone.request.intent.name = "AskWhatsIntent";
+    alone.request.intent.slots.query = {
+      name: "query", value: "what's", confirmationStatus: "NONE", source: "USER",
+    };
+    const before = sent.length;
+    const hubAlone = fakeHub({ connected: false });
+    r = await handle(post(alone), env, passVerify, { hub: hubAlone.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.match(said(await speech(r)), /didn't catch that/);
+    assert.equal(hubAlone.seen.length, 0);
+    assert.equal(sent.length, before);
+    assert.ok(lines.some((l) => l.includes("intent=AskWhatsIntent") && l.includes("outcome=empty")));
+  } finally {
+    console.log = orig;
+  }
+  ok("realistic AskWhatIntent reads slotValue and rebuilds a what's question");
 }
 assert.ok(sent.length >= qBefore);
 console.log(`ALL ${n} PASSED`);

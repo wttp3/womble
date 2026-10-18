@@ -99,7 +99,7 @@
         {
           "name": "AskWhatsIntent",
           "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
-          "samples": ["what's {query}"]
+          "samples": ["what's {query}", "whats {query}"]
         },
         {
           "name": "AskWhatIsIntent",
