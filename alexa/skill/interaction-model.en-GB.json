@@ -92,20 +92,114 @@
           ]
         },
         {
-          "name": "QuestionIntent",
-          "slots": [
-            {
-              "name": "ask",
-              "type": "WombleAsk"
-            },
-            {
-              "name": "query",
-              "type": "AMAZON.SearchQuery"
-            }
-          ],
-          "samples": [
-            "{ask} {query}"
-          ]
+          "name": "AskWhatIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what {query}"]
+        },
+        {
+          "name": "AskWhatsIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what's {query}"]
+        },
+        {
+          "name": "AskWhatIsIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what is {query}"]
+        },
+        {
+          "name": "AskWhatAboutIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what about {query}"]
+        },
+        {
+          "name": "AskHowIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how {query}"]
+        },
+        {
+          "name": "AskHowDoIIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how do I {query}"]
+        },
+        {
+          "name": "AskHowDoYouIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how do you {query}"]
+        },
+        {
+          "name": "AskHowLongIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how long {query}"]
+        },
+        {
+          "name": "AskHowMuchIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how much {query}"]
+        },
+        {
+          "name": "AskHowManyIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how many {query}"]
+        },
+        {
+          "name": "AskWhyIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["why {query}"]
+        },
+        {
+          "name": "AskWhenIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["when {query}"]
+        },
+        {
+          "name": "AskWhoIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["who {query}"]
+        },
+        {
+          "name": "AskIsIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["is {query}"]
+        },
+        {
+          "name": "AskAreIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["are {query}"]
+        },
+        {
+          "name": "AskCanIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["can {query}"]
+        },
+        {
+          "name": "AskCouldIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["could {query}"]
+        },
+        {
+          "name": "AskShouldIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["should {query}"]
+        },
+        {
+          "name": "ResearchIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["research {query}"]
+        },
+        {
+          "name": "TellMeAboutIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["tell me about {query}"]
+        },
+        {
+          "name": "TellMeIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["tell me {query}"]
+        },
+        {
+          "name": "AskAndIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["and {query}"]
         },
         {
           "name": "AMAZON.HelpIntent",
@@ -136,29 +230,7 @@
           "samples": []
         }
       ],
-      "types": [
-        {
-          "name": "WombleAsk",
-          "values": [
-            { "name": { "value": "what" } },
-            { "name": { "value": "what's" } },
-            { "name": { "value": "what is" } },
-            { "name": { "value": "what about" } },
-            { "name": { "value": "how" } },
-            { "name": { "value": "how do I" } },
-            { "name": { "value": "why" } },
-            { "name": { "value": "when" } },
-            { "name": { "value": "who" } },
-            { "name": { "value": "is" } },
-            { "name": { "value": "can" } },
-            { "name": { "value": "should" } },
-            { "name": { "value": "research" } },
-            { "name": { "value": "tell me about" } },
-            { "name": { "value": "tell me" } },
-            { "name": { "value": "and" } }
-          ]
-        }
-      ]
+      "types": []
     }
   }
 }

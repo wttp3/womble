@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as x509 from "@peculiar/x509";
 import worker, { HubLink } from "../src/index.js";
-import { handle, joinQuestion } from "../src/app.js";
+import { ASK_CARRIERS, handle, joinQuestion } from "../src/app.js";
 import { verifyAlexaRequest, verifyChain, checkCertUrl } from "../src/verify.js";
 import { authorizeHub, routeHub, tokensEqual, toSsml, FRAME_LINE, PROGRESSIVE_LINE, STALE_MS, HUB_OBJECT_NAME } from "../src/hub_link.js";
 
@@ -216,14 +216,14 @@ const qBefore = sent.length;
 
 {
   const hub = fakeHub({ connected: false });
-  const b = withApi(alexaBody({ intent: { name: "QuestionIntent", slots: { query: { value: "a substitute for buttermilk" } } } }));
+  const b = withApi(alexaBody({ intent: { name: "AskWhatsIntent", slots: { query: { value: "a substitute for buttermilk" } } } }));
   r = await handle(post(b), env, passVerify, { hub: hub.ns, progressiveMs: 500, cutoffMs: 800, fetch: async () => { throw new Error("progressive should not run"); } });
   s = await speech(r);
   assert.equal(said(s), "On it.");
   assert.equal(s.shouldEndSession, true);
-  assert.equal(sent.at(-1).text, "a substitute for buttermilk");
+  assert.equal(sent.at(-1).text, "what's a substitute for buttermilk");
   assert.equal(sent.at(-1).sessionId, "s1");
-  assert.equal(hub.seen[0].text, "a substitute for buttermilk");
+  assert.equal(hub.seen[0].text, "what's a substitute for buttermilk");
   assert.equal(hub.seen[0].sessionId, "s1");
   ok("hub offline -> enqueue + 'On it.'");
 }
@@ -234,7 +234,7 @@ const qBefore = sent.length;
     delayMs: 0,
     answer: { speech: "Use yogurt or a splash of milk.", end_session: true },
   });
-  const b = withApi(body({ type: "IntentRequest", intent: { name: "QuestionIntent", slots: { query: { value: "a substitute for buttermilk" } } } }));
+  const b = withApi(body({ type: "IntentRequest", intent: { name: "AskWhatsIntent", slots: { query: { value: "a substitute for buttermilk" } } } }));
   const before = sent.length;
   r = await handle(post(b), env, passVerify, {
     hub: hub.ns, progressiveMs: 500, cutoffMs: 800,
@@ -250,6 +250,7 @@ const qBefore = sent.length;
   assert.equal(hub.seen[0].locale, "en-GB");
   assert.equal(typeof hub.seen[0].deadline, "number");
   assert.ok(hub.seen[0].id);
+  assert.equal(hub.seen[0].text, "what's a substitute for buttermilk");
   ok("hub answer spoken, session ended, queue not used");
 }
 
@@ -258,12 +259,13 @@ const qBefore = sent.length;
     delayMs: 0,
     answer: { speech: "Want the method too?", end_session: false, reprompt: "Want the method?" },
   });
-  const b = body({ type: "IntentRequest", intent: { name: "QuestionIntent", slots: { query: { value: "and for scones" } } } });
+  const b = body({ type: "IntentRequest", intent: { name: "AskWhatAboutIntent", slots: { query: { value: "for scones" } } } });
   r = await handle(post(b), env, passVerify, { hub: hub.ns, progressiveMs: 500, cutoffMs: 800 });
   s = await speech(r);
   assert.equal(said(s), "Want the method too?");
   assert.equal(s.shouldEndSession, false);
   assert.equal(said(s.reprompt), "Want the method?");
+  assert.equal(hub.seen[0].text, "what about for scones");
   ok("end_session false keeps the mic open with the brain's reprompt");
 }
 
@@ -289,7 +291,7 @@ const qBefore = sent.length;
     delayMs: 80,
     answer: { speech: "Yogurt works in scones.", end_session: true },
   });
-  const b = withApi(body({ type: "IntentRequest", intent: { name: "QuestionIntent", slots: { query: { value: "for scones" } } } }));
+  const b = withApi(body({ type: "IntentRequest", intent: { name: "AskWhatAboutIntent", slots: { query: { value: "for scones" } } } }));
   const before = sent.length;
   r = await handle(post(b), env, passVerify, {
     hub: hub.ns, progressiveMs: 20, cutoffMs: 200,
@@ -333,39 +335,81 @@ const qBefore = sent.length;
   ok("cutoff speaks the frame line, enqueues, and has already said one moment");
 }
 
-assert.equal(joinQuestion("how do I", "slice a mango"), "how do I slice a mango");
-assert.equal(joinQuestion("why", "slice a mango"), "why slice a mango");
-assert.equal(joinQuestion("is", "it safe to leave butter out"), "is it safe to leave butter out");
-assert.equal(joinQuestion("what's", "a substitute for buttermilk"), "what's a substitute for buttermilk");
-assert.equal(joinQuestion("what about", "for scones"), "what about for scones");
-assert.equal(joinQuestion("tell me about", "mangoes"), "tell me about mangoes");
-assert.equal(joinQuestion("and", "for scones"), "and for scones");
-assert.equal(joinQuestion("How do I", "slice a mango"), "How do I slice a mango");
-assert.equal(joinQuestion("what's", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
-assert.equal(joinQuestion("how", "how do I slice a mango"), "how do I slice a mango");
-assert.equal(joinQuestion("what", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
-assert.equal(joinQuestion("why", "why slice a mango"), "why slice a mango");
-assert.equal(joinQuestion("", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
-assert.equal(joinQuestion("is", "island breakfast"), "is island breakfast");
-ok("question rebuild keeps the carrier and leaves a full SearchQuery unchanged");
+const fromIntent = (name, query) => joinQuestion(ASK_CARRIERS[name], query);
+assert.equal(fromIntent("AskHowDoIIntent", "slice a mango"), "how do I slice a mango");
+assert.equal(fromIntent("AskHowDoYouIntent", "slice a mango"), "how do you slice a mango");
+assert.equal(fromIntent("AskWhyIntent", "slice a mango"), "why slice a mango");
+assert.equal(fromIntent("AskIsIntent", "it safe to leave butter out"), "is it safe to leave butter out");
+assert.equal(fromIntent("AskAreIntent", "the eggs still good"), "are the eggs still good");
+assert.equal(fromIntent("AskHowLongIntent", "does it bake"), "how long does it bake");
+assert.equal(fromIntent("AskHowMuchIntent", "buttermilk"), "how much buttermilk");
+assert.equal(fromIntent("AskHowManyIntent", "eggs"), "how many eggs");
+assert.equal(fromIntent("AskWhatIntent", "time is dinner"), "what time is dinner");
+assert.equal(fromIntent("AskWhatsIntent", "a substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatIsIntent", "a substitute for buttermilk"), "what is a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatAboutIntent", "for scones"), "what about for scones");
+assert.equal(fromIntent("AskCanIntent", "I freeze it"), "can I freeze it");
+assert.equal(fromIntent("AskCouldIntent", "I use yogurt"), "could I use yogurt");
+assert.equal(fromIntent("AskShouldIntent", "I freeze it"), "should I freeze it");
+assert.equal(fromIntent("ResearchIntent", "buttermilk substitutes"), "research buttermilk substitutes");
+assert.equal(fromIntent("TellMeAboutIntent", "mangoes"), "tell me about mangoes");
+assert.equal(fromIntent("TellMeIntent", "a substitute"), "tell me a substitute");
+assert.equal(fromIntent("AskAndIntent", "for scones"), "and for scones");
+assert.equal(fromIntent("AskWhyIntent", "why slice a mango"), "why slice a mango");
+assert.equal(fromIntent("AskWhatsIntent", "what's a substitute for buttermilk"), "what's a substitute for buttermilk");
+ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
+
+{
+  const model = JSON.parse(readFileSync(new URL("../skill/interaction-model.en-GB.json", import.meta.url), "utf8"));
+  const lang = model.interactionModel.languageModel;
+  assert.deepEqual(lang.types, []);
+  const listIntents = new Set(["AddIntent", "FindIntent", "SaveIntent", "RememberIntent", "CaptureIntent"]);
+  const seen = new Map();
+  const searchIntents = [];
+  for (const intent of lang.intents) {
+    assert.notEqual(intent.name, "QuestionIntent");
+    const slots = intent.slots || [];
+    assert.ok(slots.every((s) => s.type !== "WombleAsk"));
+    const phrase = slots.filter((s) => s.type === "AMAZON.SearchQuery");
+    if (phrase.length) {
+      assert.equal(slots.length, 1, `${intent.name} has a phrase slot plus another slot`);
+      assert.equal(phrase[0].name, "query");
+      searchIntents.push(intent.name);
+    }
+    for (const sample of intent.samples || []) {
+      assert.ok(!seen.has(sample), `sample used by ${seen.get(sample)} and ${intent.name}: ${sample}`);
+      seen.set(sample, intent.name);
+      if (!phrase.length) continue;
+      const refs = [...sample.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]);
+      assert.deepEqual(refs, ["query"], `${intent.name} sample must be a carrier plus {query}: ${sample}`);
+      assert.match(sample, /^(.*\S) \{query\}$/, `${intent.name} sample needs a literal carrier: ${sample}`);
+      assert.ok(!/\{[^}]+\}/.test(sample.replace("{query}", "")), sample);
+    }
+  }
+  const askNames = searchIntents.filter((name) => !listIntents.has(name));
+  assert.deepEqual(new Set(askNames), new Set(Object.keys(ASK_CARRIERS)));
+  for (const intent of lang.intents) {
+    if (!(intent.name in ASK_CARRIERS)) continue;
+    assert.deepEqual(intent.samples, [`${ASK_CARRIERS[intent.name]} {query}`]);
+  }
+  ok("interaction model: one SearchQuery slot, a literal carrier, no shared samples");
+}
 
 {
   const hub = fakeHub({ connected: false });
-  const b = withApi(alexaBody({ intent: { name: "QuestionIntent", slots: {
-    ask: { name: "ask", value: "how do I" },
-    query: { name: "query", value: "slice a mango" },
-  } } }));
+  const b = withApi(alexaBody({ intent: { name: "AskHowDoIIntent", slots: { query: { value: "slice a mango" } } } }));
   r = await handle(post(b), env, passVerify, { hub: hub.ns, progressiveMs: 500, cutoffMs: 800, fetch: async () => { throw new Error("progressive should not run"); } });
   assert.equal(sent.at(-1).text, "how do I slice a mango");
   assert.equal(hub.seen[0].text, "how do I slice a mango");
-  const full = withApi(alexaBody({ intent: { name: "QuestionIntent", slots: {
-    ask: { name: "ask", value: "why" },
-    query: { name: "query", value: "why slice a mango" },
-  } } }));
+  const full = withApi(alexaBody({ intent: { name: "AskWhyIntent", slots: { query: { value: "why slice a mango" } } } }));
   const hubFull = fakeHub({ connected: false });
   r = await handle(post(full), env, passVerify, { hub: hubFull.ns, progressiveMs: 500, cutoffMs: 800 });
   assert.equal(hubFull.seen[0].text, "why slice a mango");
-  ok("QuestionIntent sends the rebuilt question to the hub and the queue");
+  const different = withApi(alexaBody({ intent: { name: "AskWhyIntent", slots: { query: { value: "slice a mango" } } } }));
+  const hubWhy = fakeHub({ connected: false });
+  r = await handle(post(different), env, passVerify, { hub: hubWhy.ns, progressiveMs: 500, cutoffMs: 800 });
+  assert.equal(hubWhy.seen[0].text, "why slice a mango");
+  ok("ask intents send the rebuilt question to the hub and the queue");
 }
 assert.ok(sent.length >= qBefore);
 console.log(`ALL ${n} PASSED`);

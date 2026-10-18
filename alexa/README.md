@@ -31,7 +31,7 @@ The signature, timestamp and skill-id checks are unchanged. After they pass:
 - **Hub offline**, or the heartbeat is older than 30 s: today's path. Enqueue the job and say "On it."
 - Spoken text is plain, SSML-escaped, and capped well under 8000 characters. Observability stays off. The worker log line is `alexa hub wait_ms=… outcome=…` and does not include the words.
 
-`QuestionIntent` splits the utterance into `ask` (`WombleAsk`) and `query` (`AMAZON.SearchQuery`). The worker joins them back, so "how do I slice a mango" and "why slice a mango" stay different questions, and "is it safe to…" keeps its "is". A query that already starts with that ask phrase is sent unchanged. Session memory on the hub (`alexa:<sessionId>`, or `alexa:<room>` when there is no session id) carries the follow-up. Yes and No send the words `yes` and `no` down the same path.
+Each question carrier is its own intent, with one `AMAZON.SearchQuery` slot and a literal carrier in the sample. Alexa drops that carrier from the slot, and the worker puts it back from the intent name, so "how do I slice a mango" and "why slice a mango" stay different questions. A query that already starts with that carrier is sent unchanged. Session memory on the hub (`alexa:<sessionId>`, or `alexa:<room>` when there is no session id) carries the follow-up. Yes and No send the words `yes` and `no` down the same path.
 
 ## Andrew: steps to finish
 
@@ -73,7 +73,7 @@ The skill already exists. Do not create another one, and do not change the endpo
 
 What the pasted model adds, on top of Add, Find, Save, Remember, Capture, Help, Stop, Cancel, NavigateHome and Fallback:
 
-- **QuestionIntent**, slots `ask` (`WombleAsk`) and `query` (`AMAZON.SearchQuery`). The sample is `{ask} {query}`. `WombleAsk` values are: what, what's, what is, what about, how, how do I, why, when, who, is, can, should, research, tell me about, tell me, and. The worker rebuilds `${ask} ${query}`.
+- One intent per carrier, each with only `query` (`AMAZON.SearchQuery`) and a sample that is the literal carrier plus `{query}`: AskWhat (`what`), AskWhats (`what's`), AskWhatIs (`what is`), AskWhatAbout (`what about`), AskHow (`how`), AskHowDoI (`how do I`), AskHowDoYou (`how do you`), AskHowLong (`how long`), AskHowMuch (`how much`), AskHowMany (`how many`), AskWhy (`why`), AskWhen (`when`), AskWho (`who`), AskIs (`is`), AskAre (`are`), AskCan (`can`), AskCould (`could`), AskShould (`should`), Research (`research`), TellMeAbout (`tell me about`), TellMe (`tell me`), AskAnd (`and`). The worker rebuilds `${carrier} ${query}` from the intent name. `is`/`are`, `can`/`could`/`should`, and `tell me`/`tell me about` are separate because the word is part of the question.
 - **AMAZON.YesIntent** and **AMAZON.NoIntent**, built-in, with empty sample lists (Amazon supplies the utterances).
 
 ### 5. Create the Cloudflare queue token (you type the secret; it never goes in a file)

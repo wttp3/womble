@@ -204,7 +204,7 @@ flowchart LR
 * **Endpoint:** `POST <worker-url>/` or `/alexa` (the workers.dev URL `cf deploy` prints). `GET` with `Upgrade: websocket` on `/hub` is the hub socket and requires bearer `HUB_LINK_TOKEN`. Any other method or path returns 404. A bad or unconfigured skill request returns 400 with an `x-reason` header (skill id not configured / signature / json / timestamp / application id). A bad hub token returns 401; a foreign `Origin` returns 403.
 * **Interaction model** (invocation `frida`):
   * AddIntent, FindIntent, SaveIntent and RememberIntent each send text prefixed with their verb (add / find / save / remember).
-  * CaptureIntent sends the raw query. QuestionIntent sends `ask` (`WombleAsk`) plus `query` (`AMAZON.SearchQuery`), joined into the full question. A query that already starts with the ask phrase is sent as it is.
+  * CaptureIntent sends the raw query. Each question carrier is its own intent (`AskWhatIntent`, `AskHowDoIIntent`, `AskIsIntent`, `ResearchIntent`, and the rest in `alexa/README.md`) with a single `AMAZON.SearchQuery` slot. The worker prefixes the slot with the carrier from the intent name. A query that already starts with that carrier is sent as it is.
   * Built-in intents: Help, Stop, Cancel, NavigateHome, Yes, No, Fallback.
 * **Queue job:** `{v:1, text, deviceId, ts, requestId, intent, locale, source:"alexa", sessionId}`, sent with contentType json, on the offline path and on the 6.5 s cutoff. A fast live answer is not queued. If the send fails, Alexa says "Womble's not reachable, try again."
 * **Queue settings** (from alexa/README): HTTP pull consumer, batch 10, visibility 60 s, max retries 3, retry delay 5 s.

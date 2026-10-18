@@ -75,8 +75,34 @@ function phraseAtStart(text, phrase) {
   return /[\s,?.!;:'"]/.test(t[p.length]);
 }
 
-// QuestionIntent splits the carrier into `ask` and the rest into `query`.
-// A SearchQuery that already begins with that carrier is left unchanged.
+// AMAZON.SearchQuery cannot share an utterance with another slot, so each
+// carrier is its own intent. The worker puts that carrier back in front of
+// the query. A query that already begins with it is left unchanged.
+export const ASK_CARRIERS = {
+  AskWhatIntent: "what",
+  AskWhatsIntent: "what's",
+  AskWhatIsIntent: "what is",
+  AskWhatAboutIntent: "what about",
+  AskHowIntent: "how",
+  AskHowDoIIntent: "how do I",
+  AskHowDoYouIntent: "how do you",
+  AskHowLongIntent: "how long",
+  AskHowMuchIntent: "how much",
+  AskHowManyIntent: "how many",
+  AskWhyIntent: "why",
+  AskWhenIntent: "when",
+  AskWhoIntent: "who",
+  AskIsIntent: "is",
+  AskAreIntent: "are",
+  AskCanIntent: "can",
+  AskCouldIntent: "could",
+  AskShouldIntent: "should",
+  ResearchIntent: "research",
+  TellMeAboutIntent: "tell me about",
+  TellMeIntent: "tell me",
+  AskAndIntent: "and",
+};
+
 export function joinQuestion(ask, query) {
   const a = squash(ask);
   const q = squash(query);
@@ -88,10 +114,10 @@ export function joinQuestion(ask, query) {
 function intentText(name, intent) {
   if (name === "AMAZON.YesIntent") return "yes";
   if (name === "AMAZON.NoIntent") return "no";
-  if (name !== "CaptureIntent" && name !== "QuestionIntent" && !(name in CARRIER_INTENTS)) return null;
+  if (!(name in ASK_CARRIERS) && name !== "CaptureIntent" && !(name in CARRIER_INTENTS)) return null;
   const q = (intent?.slots?.query?.value || "").trim();
-  if (name === "QuestionIntent") return joinQuestion(intent?.slots?.ask?.value, q);
   if (!q) return "";
+  if (name in ASK_CARRIERS) return joinQuestion(ASK_CARRIERS[name], q);
   if (CARRIER_INTENTS[name]) return `${CARRIER_INTENTS[name]} ${q}`;
   return q;
 }
