@@ -36,7 +36,7 @@ The first sentence is synthesised while the rest of the reply is still arriving,
 
 `hub/alexa_link.py` keeps an outbound WebSocket to the womble-alexa worker (`wss://<worker-host>/hub`). It is off unless `ALEXA_LINK=1`. The worker URL is `ALEXA_WORKER_URL`. The bearer token is `HUB_LINK_TOKEN`, or Keychain item `womble-hub-link` (account `$USER`), the same value as the worker secret. Deploy steps and the Alexa console rebuild are in [`alexa/README.md`](../alexa/README.md).
 
-Each job goes through the regex router first, then the brain, with session key `alexa:<sessionId>` (or `alexa:<room>`). The reply is spoken on the Echo and shown on the frame. The same request id is claimed before the answer, so the queue puller does not show it again. `ALEXA_LINK_TEST_DELAY_S` (unset by default) delays the answer so the worker's "One moment…" and kitchen-frame lines can be checked. The log line is `alexa link hop_ms` / `model_ms` and does not include the words or the worker URL.
+Each job goes through the regex router first, then the brain, with session key `alexa:<sessionId>` (or `alexa:<room>`). The reply is spoken on the Echo and shown on the frame. A brain answer keeps the Echo session open with "Anything else?" so a follow-up does not need a new invocation. A list action still ends the session. The same request id is claimed before the answer, so the queue puller does not show it again. `ALEXA_LINK_TEST_DELAY_S` (unset by default) delays the answer so the worker's "One moment…" and kitchen-frame lines can be checked. The log lines are `alexa job intent=… text=… session=… speech=… end_session=…` (speech is the first 80 characters) and `alexa link hop_ms` / `model_ms`. They do not include the worker URL or the token.
 
 ```
 python tests/test_alexa_link.py

@@ -276,7 +276,7 @@ const qBefore = sent.length;
   s = await speech(r);
   assert.equal(hub.seen[0].text, "yes");
   assert.equal(s.shouldEndSession, false);
-  assert.equal(said(s.reprompt), "Anything else for the kitchen?");
+  assert.equal(said(s.reprompt), "Anything else?");
   const no = body({ type: "IntentRequest", intent: { name: "AMAZON.NoIntent" } });
   const hubNo = fakeHub({ delayMs: 0, answer: { speech: "OK.", end_session: true } });
   r = await handle(post(no), env, passVerify, { hub: hubNo.ns, progressiveMs: 400, cutoffMs: 800 });
@@ -346,7 +346,13 @@ assert.equal(fromIntent("AskHowMuchIntent", "buttermilk"), "how much buttermilk"
 assert.equal(fromIntent("AskHowManyIntent", "eggs"), "how many eggs");
 assert.equal(fromIntent("AskWhatIntent", "time is dinner"), "what time is dinner");
 assert.equal(fromIntent("AskWhatsIntent", "a substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatsAIntent", "substitute for buttermilk"), "what's a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatsTheIntent", "substitute for buttermilk"), "what's the substitute for buttermilk");
+assert.equal(fromIntent("AskWhatsASubstituteForIntent", "buttermilk"), "what's a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatsTheSubstituteForIntent", "buttermilk"), "what's the substitute for buttermilk");
 assert.equal(fromIntent("AskWhatIsIntent", "a substitute for buttermilk"), "what is a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatIsAIntent", "substitute for buttermilk"), "what is a substitute for buttermilk");
+assert.equal(fromIntent("AskWhatIsASubstituteForIntent", "buttermilk"), "what is a substitute for buttermilk");
 assert.equal(fromIntent("AskWhatAboutIntent", "for scones"), "what about for scones");
 assert.equal(fromIntent("AskCanIntent", "I freeze it"), "can I freeze it");
 assert.equal(fromIntent("AskCouldIntent", "I use yogurt"), "could I use yogurt");
@@ -363,6 +369,7 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
   const model = JSON.parse(readFileSync(new URL("../skill/interaction-model.en-GB.json", import.meta.url), "utf8"));
   const lang = model.interactionModel.languageModel;
   assert.deepEqual(lang.types, []);
+  assert.equal(lang.modelConfiguration.fallbackIntentSensitivity.level, "LOW");
   const listIntents = new Set(["AddIntent", "FindIntent", "SaveIntent", "RememberIntent", "CaptureIntent"]);
   const seen = new Map();
   const searchIntents = [];
@@ -508,6 +515,85 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
     console.log = orig;
   }
   ok("realistic AskWhatIntent reads slotValue and rebuilds a what's question");
+}
+
+{
+  const lines = [];
+  const orig = console.log;
+  console.log = (...args) => { lines.push(args.join(" ")); };
+  const capture = () => {
+    const found = lines.splice(0, lines.length);
+    return found;
+  };
+  try {
+    r = await handle(post(body({ type: "LaunchRequest" })), env, passVerify);
+    s = await speech(r);
+    assert.equal(said(s), "Hi, what do you need?");
+    assert.ok(capture().some((l) => l === "alexa request=LaunchRequest intent=- text="));
+
+    const launched = body({ type: "LaunchRequest", inputTranscript: "what's a substitute for buttermilk" });
+    const hubLaunch = fakeHub({ connected: false });
+    r = await handle(post(launched), env, passVerify, { hub: hubLaunch.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hubLaunch.seen[0].text, "what's a substitute for buttermilk");
+    assert.equal(hubLaunch.seen[0].intent, "LaunchRequest");
+    assert.ok(capture().some((l) => l.includes("request=LaunchRequest") && l.includes("text=what's a substitute for buttermilk")));
+
+    const missed = body({ type: "IntentRequest", intent: { name: "AMAZON.FallbackIntent", confirmationStatus: "NONE" } });
+    const before = sent.length;
+    const hubMiss = fakeHub({ connected: false });
+    r = await handle(post(missed), env, passVerify, { hub: hubMiss.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.match(said(await speech(r)), /starting with add, find or save/);
+    assert.equal(hubMiss.seen.length, 0);
+    assert.equal(sent.length, before);
+    assert.ok(capture().some((l) => l === "alexa request=IntentRequest intent=AMAZON.FallbackIntent text="));
+
+    const fallback = body({
+      type: "IntentRequest",
+      intent: { name: "AMAZON.FallbackIntent", confirmationStatus: "NONE" },
+      inputTranscript: "what's a substitute for buttermilk",
+    });
+    const hubFallback = fakeHub({ connected: false });
+    r = await handle(post(fallback), env, passVerify, { hub: hubFallback.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hubFallback.seen[0].text, "what's a substitute for buttermilk");
+    assert.equal(hubFallback.seen[0].intent, "AMAZON.FallbackIntent");
+    const fallbackLogs = capture();
+    assert.ok(fallbackLogs.some((l) => l.includes("request=IntentRequest") && l.includes("intent=AMAZON.FallbackIntent") && l.includes("text=what's a substitute for buttermilk")));
+    assert.ok(fallbackLogs.some((l) => l.includes("outcome=offline")));
+    assert.equal(fallbackLogs.some((l) => l.includes("atk-")), false);
+
+    const ended = body({
+      type: "SessionEndedRequest",
+      reason: "ERROR",
+      error: { type: "INVALID_RESPONSE", message: "https://secret.example/token bad reply" },
+    });
+    r = await handle(post(ended), env, passVerify);
+    assert.equal(r.status, 200);
+    const endedLine = capture().find((l) => l.startsWith("alexa request=SessionEndedRequest"));
+    assert.match(endedLine, /intent=-/);
+    assert.match(endedLine, /reason=ERROR/);
+    assert.match(endedLine, /error=INVALID_RESPONSE:/);
+    assert.match(endedLine, /bad reply/);
+    assert.equal(endedLine.includes("https://"), false);
+    assert.equal(endedLine.includes("secret.example"), false);
+
+    const oneShot = withApi(alexaBody({
+      intent: { name: "AskWhatsASubstituteForIntent", slots: { query: { value: "buttermilk" } } },
+    }));
+    const hubShot = fakeHub({ connected: false });
+    r = await handle(post(oneShot), env, passVerify, { hub: hubShot.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hubShot.seen[0].text, "what's a substitute for buttermilk");
+    assert.equal(hubShot.seen[0].intent, "AskWhatsASubstituteForIntent");
+    const wide = withApi(alexaBody({
+      intent: { name: "AskWhatsAIntent", slots: { query: { value: "substitute for buttermilk" } } },
+    }));
+    const hubWide = fakeHub({ connected: false });
+    r = await handle(post(wide), env, passVerify, { hub: hubWide.ns, progressiveMs: 500, cutoffMs: 800 });
+    assert.equal(hubWide.seen[0].text, "what's a substitute for buttermilk");
+    assert.ok(capture().some((l) => l.startsWith("alexa request=IntentRequest intent=AskWhatsAIntent")));
+  } finally {
+    console.log = orig;
+  }
+  ok("request type is logged, and a one-shot or fallback transcript reaches the hub");
 }
 assert.ok(sent.length >= qBefore);
 console.log(`ALL ${n} PASSED`);

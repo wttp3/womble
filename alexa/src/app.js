@@ -81,7 +81,16 @@ function phraseAtStart(text, phrase) {
 export const ASK_CARRIERS = {
   AskWhatIntent: "what",
   AskWhatsIntent: "what's",
+  // Longer carriers. "what's {query}" matches in an open session and misses
+  // one-shot, so Alexa sends LaunchRequest and drops the words.
+  AskWhatsAIntent: "what's a",
+  AskWhatsTheIntent: "what's the",
+  AskWhatsASubstituteForIntent: "what's a substitute for",
+  AskWhatsTheSubstituteForIntent: "what's the substitute for",
   AskWhatIsIntent: "what is",
+  AskWhatIsAIntent: "what is a",
+  AskWhatIsTheIntent: "what is the",
+  AskWhatIsASubstituteForIntent: "what is a substitute for",
   AskWhatAboutIntent: "what about",
   AskHowIntent: "how",
   AskHowDoIIntent: "how do I",
@@ -183,6 +192,45 @@ function logField(text, max) {
   return s.length <= max ? s : s.slice(0, max);
 }
 
+function logToken(value) {
+  const s = String(value ?? "").replace(/[^\w.]/g, "");
+  return s || "-";
+}
+
+// LaunchRequest and FallbackIntent do not carry the utterance unless Alexa
+// put it on a slot or one of these fields. Never walk the whole body: the
+// access token lives next to the request.
+const HEARD_FIELDS = ["inputTranscript", "utterance", "transcript", "speech", "query"];
+
+export function heardText(req) {
+  const slots = req?.intent?.slots;
+  let best = "";
+  if (slots && typeof slots === "object") {
+    const list = Array.isArray(slots) ? slots : Object.values(slots);
+    for (const slot of list) {
+      const phrase = slotPhrase(slot);
+      if (phrase.length > best.length) best = phrase;
+    }
+  }
+  if (best) return best;
+  for (const key of HEARD_FIELDS) {
+    if (typeof req?.[key] !== "string") continue;
+    const phrase = squash(req[key]).replace(/https?:\/\/\S+/gi, "").trim();
+    if (phrase) return phrase;
+  }
+  return "";
+}
+
+function logAlexaRequest(req, fields = {}) {
+  const parts = [`alexa request=${logToken(req.type)}`, `intent=${logToken(req.intent?.name)}`];
+  if (req.type === "SessionEndedRequest") {
+    const err = req.error && typeof req.error === "object" ? req.error : {};
+    parts.push(`reason=${logToken(req.reason)}`, `error=${logToken(err.type)}:${logField(err.message, 120) || "-"}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, "text")) parts.push(`text=${logField(fields.text, 120)}`);
+  console.log(parts.join(" "));
+}
+
 async function enqueue(env, job) {
   try {
     await env.QUEUE.send(job, { contentType: "json" });
@@ -282,23 +330,31 @@ export async function handle(request, env, verify, deps = {}) {
   const appId = body.session?.application?.applicationId ?? body.context?.System?.application?.applicationId;
   if (appId !== env.ALEXA_SKILL_ID) return bad("application id");
 
-  switch (req.type) {
-    case "LaunchRequest":
-      return json(say("Hi, what do you need?", false, "What do you need? Start with add, find or save."));
-    case "SessionEndedRequest":
-      return json(silent());
-    case "IntentRequest":
-      break;
-    default:
-      return json(silent());
+  if (req.type === "SessionEndedRequest") {
+    logAlexaRequest(req);
+    return json(silent());
+  }
+  if (req.type === "LaunchRequest") {
+    const heard = heardText(req);
+    logAlexaRequest(req, { text: heard });
+    if (heard) return speakJob(body, req, env, "LaunchRequest", heard, { ...deps, rawQuery: heard });
+    return json(say("Hi, what do you need?", false, "What do you need? Start with add, find or save."));
+  }
+  if (req.type !== "IntentRequest") {
+    logAlexaRequest(req);
+    return json(silent());
   }
   const name = req.intent?.name;
+  logAlexaRequest(req, name === "AMAZON.FallbackIntent" ? { text: heardText(req) } : {});
   if (name === "AMAZON.HelpIntent")
     return json(say("Say what you need, starting with add, find or save. For example, add milk.", false, "What do you need?"));
   if (name === "AMAZON.StopIntent" || name === "AMAZON.CancelIntent" || name === "AMAZON.NavigateHomeIntent")
     return json(say("OK."));
-  if (name === "AMAZON.FallbackIntent")
+  if (name === "AMAZON.FallbackIntent") {
+    const heard = heardText(req);
+    if (heard) return speakJob(body, req, env, name, heard, { ...deps, rawQuery: heard });
     return json(say("Sorry, say it starting with add, find or save.", false, "What do you need?"));
+  }
   const rawQuery = slotPhrase(querySlot(req.intent));
   const text = intentText(name, req.intent);
   if (text === null)

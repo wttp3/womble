@@ -95,7 +95,7 @@ def build_reply(job: dict, res: dict) -> dict:
     end = bool(res.get("end_session", True))
     out = {"id": job.get("id") or job.get("requestId"), "speech": speech, "end_session": end}
     if not end:
-        out["reprompt"] = plain_speech(res.get("reprompt") or "") or "Anything else for the kitchen?"
+        out["reprompt"] = plain_speech(res.get("reprompt") or "") or "Anything else?"
     return out
 
 
@@ -138,12 +138,19 @@ class AlexaLink:
             reply = await reply
         if hasattr(reply, "speech"):
             card = getattr(reply, "card", None) or {"type": "text", "title": "Womble", "body": reply.speech}
+            # A finished brain answer used to close the mic, so "what about for scones"
+            # had to invoke Frida again. Hold it open. A question keeps its own reprompt.
+            # List hits return above and still end the session.
+            end = bool(getattr(reply, "end_session", True))
+            reprompt = getattr(reply, "reprompt", None)
+            if end or not reprompt:
+                reprompt = "Anything else?"
             return {
                 "category": getattr(reply, "category", "brain"),
                 "speech": reply.speech,
                 "card": card,
-                "end_session": reply.end_session,
-                "reprompt": reply.reprompt,
+                "end_session": False,
+                "reprompt": reprompt,
             }
         return reply
 

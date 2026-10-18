@@ -12,7 +12,7 @@ export const STALE_MS = 30 * 1000;
 export const MAX_SPEECH_CHARS = 6000;
 export const PROGRESSIVE_LINE = "One moment…";
 export const FRAME_LINE = "That's taking a while. I'll put it on the kitchen frame.";
-export const DEFAULT_REPROMPT = "Anything else for the kitchen?";
+export const DEFAULT_REPROMPT = "Anything else?";
 const DISPATCH_GRACE_MS = 8000;
 
 const OPEN = 1;

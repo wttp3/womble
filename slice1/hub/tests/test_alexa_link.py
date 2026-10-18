@@ -68,7 +68,8 @@ def job(**kw):
 async def test_protocol_and_dedupe(tmp):
     obj, disp, brain, seen = link(tmp)
     reply = await obj.handle_job(job())
-    assert reply == {"id": "r1", "speech": "Use yogurt.", "end_session": True}, reply
+    assert reply["id"] == "r1" and reply["speech"] == "Use yogurt.", reply
+    assert reply["end_session"] is False and reply["reprompt"] == "Anything else?", reply
     assert brain.calls == [{
         "text": "a substitute for buttermilk", "source": "alexa:Echo 1", "session": "alexa:sess-9",
     }], brain.calls
@@ -79,7 +80,7 @@ async def test_protocol_and_dedupe(tmp):
     assert again["speech"] == "Use yogurt." and len(brain.calls) == 1
     replies = [ev for ev, _ in disp.events if ev == "reply"]
     assert len(replies) == 1, disp.events
-    print("PASS link answers through the brain, dedupes the same requestId")
+    print("PASS link answers through the brain, keeps the session open, dedupes the same requestId")
 
     # Puller shares Seen, so the queued copy does not paint the frame again.
     pull = ap.AlexaPuller(disp, route, disp.push_card, devices=obj.devices, seen=seen)
@@ -124,13 +125,14 @@ async def test_protocol_and_dedupe(tmp):
             id="r-question", text="", question="what's a substitute for buttermilk",
             intent="AskWhatsIntent", sessionId="sess-9",
         ))
-        assert heard["speech"] == "Use yogurt." and heard["end_session"] is True
+        assert heard["speech"] == "Use yogurt." and heard["end_session"] is False
+        assert heard["reprompt"] == "Anything else?", heard
         assert brain.calls[-1]["text"] == "what's a substitute for buttermilk"
         line = next(l for l in logs if l.startswith("alexa job "))
         assert "intent=AskWhatsIntent" in line, line
         assert "text=what's a substitute for buttermilk" in line, line
         assert "session=alexa:sess-9" in line, line
-        assert "speech=Use yogurt." in line and "end_session=True" in line, line
+        assert "speech=Use yogurt." in line and "end_session=False" in line, line
         obj._log_job(
             {"intent": "AskWhatIntent"},
             "what a substitute for buttermilk",
@@ -249,7 +251,7 @@ async def test_reconnect(tmp):
         await asyncio.wait_for(state["answered"].wait(), 2)
         answers = [json.loads(m) for m in state["inbox"] if m not in ("ping", "pong")]
         assert answers and answers[0]["id"] == "live-1" and answers[0]["speech"] == "Use yogurt."
-        assert answers[0]["end_session"] is True
+        assert answers[0]["end_session"] is False and answers[0]["reprompt"] == "Anything else?"
         ping_deadline = time.perf_counter() + 1
         while time.perf_counter() < ping_deadline and "ping" not in state["inbox"]:
             await asyncio.sleep(0.02)
