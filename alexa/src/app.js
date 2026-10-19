@@ -7,10 +7,12 @@ import {
 const MAX_SKEW_S = 150;
 const CARRIER_INTENTS = { AddIntent: "add", FindIntent: "find", SaveIntent: "save", RememberIntent: "remember" };
 
-const say = (text, endSession = true, reprompt) => {
+const say = (text, endSession = true, reprompt, attributes) => {
   const response = { outputSpeech: { type: "SSML", ssml: toSsml(text) }, shouldEndSession: endSession };
   if (!endSession && reprompt) response.reprompt = { outputSpeech: { type: "SSML", ssml: toSsml(reprompt) } };
-  return { version: "1.0", response };
+  const out = { version: "1.0", response };
+  if (attributes) out.sessionAttributes = attributes;
+  return out;
 };
 const silent = () => ({ version: "1.0", response: {} });
 const json = (obj, status = 200) =>
@@ -24,7 +26,17 @@ function sayBrain(answer) {
   const text = speech || (end ? "OK." : "What do you need?");
   if (end) return say(text, true);
   const reprompt = plainSpeech(answer?.reprompt) || DEFAULT_REPROMPT;
-  return say(text, false, reprompt);
+  // "Anything else?" is the hold-open line. The next Yes means "keep going",
+  // not a question for the brain. A real brain question keeps its own reprompt.
+  const attributes = reprompt === DEFAULT_REPROMPT ? { frida: "more" } : undefined;
+  return say(text, false, reprompt, attributes);
+}
+
+// A follow-up that only closes the conversation. Whole utterance, so
+// "is there no buttermilk" still reaches the brain.
+export function isDismissal(text) {
+  const s = squash(text).replace(/[\u2018\u2019\u201B\u2032]/g, "'");
+  return /^(?:no|nope|no,?\s+thanks|that's all|thats all)[.!?]?$/i.test(s);
 }
 
 function directivesUrl(apiEndpoint) {
@@ -337,6 +349,7 @@ export async function handle(request, env, verify, deps = {}) {
   if (req.type === "LaunchRequest") {
     const heard = heardText(req);
     logAlexaRequest(req, { text: heard });
+    if (heard && isDismissal(heard)) return json(say("Okay."));
     if (heard) return speakJob(body, req, env, "LaunchRequest", heard, { ...deps, rawQuery: heard });
     return json(say("Hi, what do you need?", false, "What do you need? Start with add, find or save."));
   }
@@ -348,10 +361,15 @@ export async function handle(request, env, verify, deps = {}) {
   logAlexaRequest(req, name === "AMAZON.FallbackIntent" ? { text: heardText(req) } : {});
   if (name === "AMAZON.HelpIntent")
     return json(say("Say what you need, starting with add, find or save. For example, add milk.", false, "What do you need?"));
+  if (name === "AMAZON.NoIntent")
+    return json(say("Okay."));
   if (name === "AMAZON.StopIntent" || name === "AMAZON.CancelIntent" || name === "AMAZON.NavigateHomeIntent")
     return json(say("OK."));
+  if (name === "AMAZON.YesIntent" && body.session?.attributes?.frida === "more")
+    return json(say("Go on.", false, "Go on."));
   if (name === "AMAZON.FallbackIntent") {
     const heard = heardText(req);
+    if (heard && isDismissal(heard)) return json(say("Okay."));
     if (heard) return speakJob(body, req, env, name, heard, { ...deps, rawQuery: heard });
     return json(say("Sorry, say it starting with add, find or save.", false, "What do you need?"));
   }
@@ -363,5 +381,6 @@ export async function handle(request, env, verify, deps = {}) {
     console.log(`alexa intent=${name} query=${logField(rawQuery, 120)} text= outcome=empty`);
     return json(say("Sorry, I didn't catch that. What do you need?", false, "What do you need?"));
   }
+  if (isDismissal(text)) return json(say("Okay."));
   return speakJob(body, req, env, name, text, { ...deps, rawQuery });
 }

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as x509 from "@peculiar/x509";
 import worker, { HubLink } from "../src/index.js";
-import { ASK_CARRIERS, handle, joinQuestion } from "../src/app.js";
+import { ASK_CARRIERS, handle, isDismissal, joinQuestion } from "../src/app.js";
 import { verifyAlexaRequest, verifyChain, checkCertUrl } from "../src/verify.js";
 import { authorizeHub, routeHub, tokensEqual, toSsml, FRAME_LINE, PROGRESSIVE_LINE, STALE_MS, HUB_OBJECT_NAME } from "../src/hub_link.js";
 
@@ -261,10 +261,12 @@ const qBefore = sent.length;
   });
   const b = body({ type: "IntentRequest", intent: { name: "AskWhatAboutIntent", slots: { query: { value: "for scones" } } } });
   r = await handle(post(b), env, passVerify, { hub: hub.ns, progressiveMs: 500, cutoffMs: 800 });
-  s = await speech(r);
+  const asked = await r.json();
+  s = asked.response;
   assert.equal(said(s), "Want the method too?");
   assert.equal(s.shouldEndSession, false);
   assert.equal(said(s.reprompt), "Want the method?");
+  assert.equal(asked.sessionAttributes, undefined);
   assert.equal(hub.seen[0].text, "what about for scones");
   ok("end_session false keeps the mic open with the brain's reprompt");
 }
@@ -273,16 +275,66 @@ const qBefore = sent.length;
   const hub = fakeHub({ delayMs: 0, answer: { speech: "Noted.", end_session: false } });
   const b = body({ type: "IntentRequest", intent: { name: "AMAZON.YesIntent" } });
   r = await handle(post(b), env, passVerify, { hub: hub.ns, progressiveMs: 400, cutoffMs: 800 });
-  s = await speech(r);
+  const yesPayload = await r.json();
+  s = yesPayload.response;
   assert.equal(hub.seen[0].text, "yes");
   assert.equal(s.shouldEndSession, false);
   assert.equal(said(s.reprompt), "Anything else?");
+  assert.equal(yesPayload.sessionAttributes.frida, "more");
+  ok("Yes after a brain question goes to the hub; Anything else? is marked for the next turn");
+}
+
+{
+  const hub = fakeHub({ delayMs: 0, answer: { speech: "Should not be asked.", end_session: false } });
+  const before = sent.length;
   const no = body({ type: "IntentRequest", intent: { name: "AMAZON.NoIntent" } });
-  const hubNo = fakeHub({ delayMs: 0, answer: { speech: "OK.", end_session: true } });
-  r = await handle(post(no), env, passVerify, { hub: hubNo.ns, progressiveMs: 400, cutoffMs: 800 });
-  assert.equal(hubNo.seen[0].text, "no");
-  assert.equal((await speech(r)).shouldEndSession, true);
-  ok("Yes/No go to the hub; a missing reprompt gets a short one");
+  r = await handle(post(no), env, passVerify, { hub: hub.ns, progressiveMs: 400, cutoffMs: 800 });
+  s = await speech(r);
+  assert.equal(said(s), "Okay.");
+  assert.equal(s.shouldEndSession, true);
+  assert.equal(hub.seen.length, 0);
+  assert.equal(sent.length, before);
+  for (const name of ["AMAZON.StopIntent", "AMAZON.CancelIntent"]) {
+    const stopHub = fakeHub({ delayMs: 0, answer: { speech: "nope", end_session: false } });
+    r = await handle(post(body({ type: "IntentRequest", intent: { name } })), env, passVerify, { hub: stopHub.ns, progressiveMs: 400, cutoffMs: 800 });
+    s = await speech(r);
+    assert.equal(said(s), "OK.");
+    assert.equal(s.shouldEndSession, true);
+    assert.equal(stopHub.seen.length, 0);
+  }
+  const yes = body({ type: "IntentRequest", intent: { name: "AMAZON.YesIntent" } });
+  yes.session.attributes = { frida: "more" };
+  const yesHub = fakeHub({ delayMs: 0, answer: { speech: "Should not be asked.", end_session: false } });
+  r = await handle(post(yes), env, passVerify, { hub: yesHub.ns, progressiveMs: 400, cutoffMs: 800 });
+  s = await speech(r);
+  assert.equal(said(s), "Go on.");
+  assert.equal(s.shouldEndSession, false);
+  assert.equal(said(s.reprompt), "Go on.");
+  assert.equal(yesHub.seen.length, 0);
+  const captured = body({ type: "IntentRequest", intent: { name: "CaptureIntent", slots: { query: { value: "no thanks" } } } });
+  const capHub = fakeHub({ delayMs: 0, answer: { speech: "Should not be asked.", end_session: false } });
+  r = await handle(post(captured), env, passVerify, { hub: capHub.ns, progressiveMs: 400, cutoffMs: 800 });
+  s = await speech(r);
+  assert.equal(said(s), "Okay.");
+  assert.equal(s.shouldEndSession, true);
+  assert.equal(capHub.seen.length, 0);
+  const fell = body({
+    type: "IntentRequest",
+    intent: { name: "AMAZON.FallbackIntent" },
+    inputTranscript: "that's all",
+  });
+  const fallHub = fakeHub({ delayMs: 0, answer: { speech: "Should not be asked.", end_session: false } });
+  r = await handle(post(fell), env, passVerify, { hub: fallHub.ns, progressiveMs: 400, cutoffMs: 800 });
+  s = await speech(r);
+  assert.equal(said(s), "Okay.");
+  assert.equal(s.shouldEndSession, true);
+  assert.equal(fallHub.seen.length, 0);
+  assert.equal(isDismissal("is there no buttermilk"), false);
+  const still = withApi(alexaBody({ intent: { name: "AskIsIntent", slots: { query: { value: "there no buttermilk" } } } }));
+  const askHub = fakeHub({ connected: false });
+  r = await handle(post(still), env, passVerify, { hub: askHub.ns, progressiveMs: 500, cutoffMs: 800 });
+  assert.equal(askHub.seen[0].text, "is there no buttermilk");
+  ok("No, Stop and Cancel end the session; Yes after Anything else? says Go on.");
 }
 
 {

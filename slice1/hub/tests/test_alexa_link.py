@@ -146,6 +146,20 @@ async def test_protocol_and_dedupe(tmp):
         al.log.removeHandler(grab)
     print("PASS hub logs the question and reads question when text is empty")
 
+    calls_before = len(brain.calls)
+    for phrase in ("no", "No.", "nope", "that's all", "that’s all", "no thanks", "No, thanks"):
+        obj.recent.clear()
+        gone = await obj.handle_job(job(id=f"bye-{abs(hash(phrase))}", text=phrase, intent="CaptureIntent"))
+        assert gone["speech"] == "Okay." and gone["end_session"] is True, (phrase, gone)
+        assert "reprompt" not in gone, gone
+    intent_bye = await obj.handle_job(job(id="bye-intent", text="no", intent="AMAZON.NoIntent"))
+    assert intent_bye["end_session"] is True and intent_bye["speech"] == "Okay."
+    assert len(brain.calls) == calls_before, brain.calls
+    still = await obj.handle_job(job(id="not-bye", text="is there no buttermilk", intent="AskIsIntent"))
+    assert still["end_session"] is False and still["reprompt"] == "Anything else?", still
+    assert brain.calls[-1]["text"] == "is there no buttermilk"
+    print("PASS no / nope / that's all / no thanks end the session and skip the brain")
+
 
 def test_url_and_token(tmp):
     assert al.worker_ws_url("https://worker.example/hub") == "wss://worker.example/hub"

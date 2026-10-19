@@ -90,6 +90,22 @@ def plain_speech(text) -> str:
     return s
 
 
+# Whole utterance only. "is there no buttermilk" is still a question.
+_DISMISS_RE = re.compile(
+    r"^(?:no|nope|no,?\s+thanks|that(?:'|’)s all|thats all)[.!?]?$",
+    re.IGNORECASE,
+)
+_END_INTENTS = frozenset({"AMAZON.NoIntent", "AMAZON.StopIntent", "AMAZON.CancelIntent"})
+
+
+def is_dismissal(text: str) -> bool:
+    return bool(_DISMISS_RE.match(re.sub(r"\s+", " ", str(text or "")).strip()))
+
+
+def session_goodbye(text: str, intent) -> bool:
+    return (intent or "") in _END_INTENTS or is_dismissal(text)
+
+
 def build_reply(job: dict, res: dict) -> dict:
     speech = plain_speech(res.get("speech") or "") or "OK."
     end = bool(res.get("end_session", True))
@@ -196,6 +212,9 @@ class AlexaLink:
             elif duplicate:
                 res = {"category": "deduped", "speech": "OK.", "end_session": True,
                        "card": {"type": "text", "title": "", "body": ""}}
+            elif session_goodbye(text, job.get("intent")):
+                res = {"category": "dismiss", "speech": "Okay.", "end_session": True,
+                       "card": {"type": "text", "title": "", "body": "Okay."}}
             else:
                 res = await self._answer(text, room, session)
             model_ms = int((time.perf_counter() - started) * 1000)
