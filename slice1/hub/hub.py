@@ -388,17 +388,38 @@ async def main():
         except OSError as e:
             if host == HUB_IP: raise
             log.warning("loopback bind failed: %s", e)
+    alexa_devices = alexa_seen = alexa_recent = None
     try:   # Alexa jobs from Cloudflare Queue (ALEXA.md §8). A missing token is rechecked inside run().
-        from alexa_pull import AlexaPuller
+        from alexa_pull import AlexaPuller, Devices, Seen
+        alexa_devices, alexa_seen, alexa_recent = Devices(), Seen(), {}
         if os.environ.get("ALEXA_PULL", "1") == "0":
             log.info("alexa pull disabled (ALEXA_PULL=0)")
         else:
-            alexa = AlexaPuller(disp, route, push_card)   # local ref keeps the task alive
+            alexa = AlexaPuller(disp, route, push_card, devices=alexa_devices, seen=alexa_seen,
+                                recent=alexa_recent)   # local ref keeps the task alive
             async def _alexa_alert(name, exc):
                 await disp.emit("error", {"message": "Alexa link stopped", "code": "alexa", "detail": type(exc).__name__})
             alexa.task = asyncio.create_task(supervise("alexa", alexa.run, on_give_up=_alexa_alert))
     except Exception as e:
         log.warning("alexa pull not started: %s", e)
+    if os.environ.get("ALEXA_LINK", "0") == "1":
+        try:
+            from alexa_link import AlexaLink
+            # Regex first, then the brain. Session key is alexa:<sessionId>, else alexa:<room>.
+            def _alexa_route(text):
+                return route_text(text, LISTS, False)
+            async def _alexa_brain(text, *, source, session):
+                return await BRAIN.handle(text, source=source, session=session)
+            link = AlexaLink(disp, _alexa_route, _alexa_brain, push_card,
+                             devices=alexa_devices, seen=alexa_seen, recent=alexa_recent)
+            async def _link_alert(name, exc):
+                await disp.emit("error", {"message": "Alexa live link stopped", "code": "alexa-link",
+                                           "detail": type(exc).__name__})
+            link.task = asyncio.create_task(supervise("alexa-link", link.run, on_give_up=_link_alert))
+        except Exception as e:
+            log.warning("alexa link not started: %s", e)
+    else:
+        log.info("alexa link disabled (ALEXA_LINK!=1)")
 
     app["warm_task"] = asyncio.create_task(_warm())   # BOX-3 may connect during this; Session.finish waits
 

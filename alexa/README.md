@@ -1,22 +1,37 @@
-# womble-alexa: Echo → Cloudflare Queue → Womble hub (ALEXA.md slices A1–A4)
+# womble-alexa: Echo speaks the hub answer (live link), or the queue when the hub is down
 
-Built 2026-10-15. Locale **en-GB**, invocation **frida** ("Alexa, ask Frida to add milk").
+Built 2026-10-15. Live link added 2026-10-18. Locale **en-GB**, invocation **frida**.
+
+"Alexa, ask Frida what's a substitute for buttermilk" is answered by the hub. When the hub's outbound socket is connected and its heartbeat is fresh, the Echo speaks that answer and the kitchen frame shows it. A follow-up in the open session ("what about for scones") continues the same conversation. The worker does not call a model itself.
 
 | Thing | Value |
 |---|---|
 | Worker (skill endpoint) | `<worker-url>` (the `https://womble-alexa.<subdomain>.workers.dev` URL printed by `cf deploy`; path `/` or `/alexa`) |
+| Hub socket | `wss://<worker-host>/hub` (Durable Object `HubLink`, object name `hub`). Any other path on that route is rejected. |
 | Queue | `womble-alexa` (id `<queue-id>`), HTTP pull consumer: batch 10, visibility 60 s, max retries 3, retry delay 5 s |
-| Worker secret | `ALEXA_SKILL_ID` (currently the placeholder `unset` → every request gets 400) |
+| Worker secrets | `ALEXA_SKILL_ID`, `HUB_LINK_TOKEN` |
 | Interaction model | `skill/interaction-model.en-GB.json` |
-| Hub module | `~/box3-voice/slice1/hub/alexa_pull.py` (wired into hub.py; disabled until the Keychain item exists) |
-| Device → room map | `~/box3-voice/slice1/hub/data/alexa_devices.json` (created on first Alexa request) |
+| Hub modules | `slice1/hub/alexa_pull.py` (queue) and `slice1/hub/alexa_link.py` (live socket, off until `ALEXA_LINK=1`) |
+| Device → room map | `slice1/hub/data/alexa_devices.json` (created on first Alexa request; not in git) |
 
-Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`roots.js`) signature/cert-chain checks,
+Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/hub_link.js` (Durable Object), `src/verify.js` (+`roots.js`) signature/cert-chain checks,
 `cloudflare.config.ts`, `test/test.mjs`. Build/deploy needs Node ≥ 22.18: `export PATH=~/.local/node/bin:$PATH`.
 - Test: `node test/test.mjs` (positive path uses a stub verifier passed in by the test only; the deployed entry always verifies)
-- Deploy: `cf deploy`
-- Config outside git: `cloudflare.config.ts` holds no account or skill id. `cf deploy` uses the account you are logged in to (`cf login`), the skill id lives only in the Worker secret `ALEXA_SKILL_ID`, and the hub reads `CF_ACCOUNT_ID=<acct>` / `CF_QUEUE_ID=<queue-id>` from the untracked `~/box3-voice/local.env` (template `local.env.example`).
-- Set skill id: `cf workers secrets update ALEXA_SKILL_ID --worker womble-alexa --type secret_text --text <skill-id>`
+- Deploy: `cf deploy` (see below). Do not also wrangler-deploy this directory.
+- Config outside git: `cloudflare.config.ts` holds no account id, skill id, or hub token. `cf deploy` uses the account you are logged in to (`cf login`).
+
+## What the Echo hears
+
+The signature, timestamp and skill-id checks are unchanged. After they pass:
+
+- **Hub socket connected** (last heartbeat within 30 s). The worker pushes `{id, text, deviceId, sessionId, locale, deadline}` and waits for the matching `{id, speech, end_session, reprompt?}`.
+  - At **1.2 s**, if the answer is not back, it sends one progressive response, "One moment…", to `{apiEndpoint}/v1/directives` with the request's `apiAccessToken`. The speech is SSML `<speak>…</speak>`.
+  - At a hard cutoff of **6.5 s** it answers "That's taking a while. I'll put it on the kitchen frame." and still enqueues the job, so `AlexaPuller` can show it. The live link claims the request id as soon as it starts, so the queued copy is not shown twice.
+  - A brain answer keeps the session open (`shouldEndSession: false`) with reprompt "Anything else?", including when the brain itself would have ended. A brain question keeps its own reprompt, such as "Want the method?". A list action still ends the session. If the hub leaves a reprompt off an open session, the worker uses "Anything else?".
+- **Hub offline**, or the heartbeat is older than 30 s: today's path. Enqueue the job and say "On it."
+- Spoken text is plain, SSML-escaped, and capped well under 8000 characters. Observability stays off. Every request logs `alexa request=<type> intent=<name>`. `SessionEndedRequest` adds `reason=` and `error=<type>:<message>`. Launch and Fallback also log `text=` (empty when Alexa sent no words). A question that reaches the hub adds `alexa intent=… query=… text=… outcome=… wait_ms=…`, with the rebuilt question cut at 120 characters. The access token is not logged.
+
+Each question carrier is its own intent, with one `AMAZON.SearchQuery` slot and a literal carrier in the sample. Alexa drops that carrier from the slot, and the worker puts it back from the intent name, so "how do I slice a mango" and "why slice a mango" stay different questions. The slot text is `query.value`, or `query.slotValue.value` when that holds the longer phrase. A `what {query}` match that leaves `s …` is rebuilt as "what's …". A query that already starts with its carrier is sent unchanged. The carrier on its own is not sent to the brain. One-shot "Alexa, ask Frida what's a substitute for buttermilk" needs a longer sample than "what's {query}": out of session that short sample does not clear the invocation matcher, Alexa sends `LaunchRequest`, and the words never arrive. The model adds "what's a {query}", "what's the {query}", "what's a substitute for {query}", the same shapes for "what is", and a "to …" / "tell me …" sample on each ask intent for "ask Frida to …" when "to" is not stripped. Invocation stays `frida` (the in-session hit already accepts it). Fallback sensitivity is `LOW`. `HIGH` would send more utterances to Fallback without the words. Fallback and Launch forward a question only when the request actually has slot text or a transcript field. Session memory on the hub (`alexa:<sessionId>`, or `alexa:<room>` when there is no session id) carries the follow-up, including "what about for scones" after a brain answer. No, Stop and Cancel end that session with a short goodbye and are not sent to the brain. Yes after "Anything else?" says "Go on." and leaves the session open. Yes after a real brain question ("Want the method?") still sends `yes`. The hub also treats a bare "no", "nope", "that's all" or "no thanks" as that goodbye when the words arrive through a carrier or Fallback. The hub log line is `alexa job intent=… text=… session=… speech=… end_session=…` (speech is the first 80 characters).
 
 ## Andrew: steps to finish
 
@@ -39,8 +54,28 @@ Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`ro
 ### 4. Enable it on your Echos
 1. **Test** tab → set "Skill testing is enabled in" to **Development**.
 2. Dev skills appear automatically on Echos registered to the same Amazon account. Check each Echo's language is **English (United Kingdom)** (Alexa app → Devices → the Echo → Language).
-3. Try in the Test tab first: type `ask frida to add milk` → expect "On it." Then on an Echo: "Alexa, ask Frida to add milk", or "Alexa, open Frida" → "Hi, what do you need?" → "add milk".
+3. Try in the Test tab first.
+   - Hub socket down, or `ALEXA_LINK` is not `1`: `ask frida to add milk` still answers "On it." and the frame updates from the queue.
+   - Hub socket up: the Echo speaks the real answer (for example "Added milk to shopping.") and the frame shows the same card. "Alexa, ask Frida what's a substitute for buttermilk" speaks the brain's answer. While the session is open, "what about for scones" continues it.
+   - To hear the slow path, set `ALEXA_LINK_TEST_DELAY_S=7` on the hub and restart. Expect "One moment…", then "That's taking a while. I'll put it on the kitchen frame.", and the frame still shows the answer when the hub finishes. Unset the delay afterwards.
+   - "Alexa, open Frida" → "Hi, what do you need?" → "add milk".
 4. If an Echo is on Alexa+, and Frida isn't found, say so: it may hide dev skills.
+
+### Rebuild the model on the existing skill
+
+The skill already exists. Do not create another one, and do not change the endpoint or the skill id.
+
+1. https://developer.amazon.com/alexa/console/ask → open **Frida**.
+2. Left menu: **Build → Interaction Model → JSON Editor**.
+3. Select all, delete, paste the whole of `skill/interaction-model.en-GB.json`.
+4. **Save**, then **Build skill** (top). Wait until the build reports success. The new model is not live until that build finishes.
+5. Leave **Endpoint** and the skill id as they are. **Test** stays **Development**.
+
+What the pasted model adds, on top of Add, Find, Save, Remember, Capture, Help, Stop, Cancel, NavigateHome and Fallback:
+
+- One intent per carrier, each with only `query` (`AMAZON.SearchQuery`) and a sample that is the literal carrier plus `{query}`: AskWhat (`what`), AskWhats (`what's` and `whats`), AskWhatsA (`what's a`), AskWhatsThe (`what's the`), AskWhatsASubstituteFor (`what's a substitute for`), AskWhatsTheSubstituteFor (`what's the substitute for`), AskWhatIs (`what is`), AskWhatIsA (`what is a`), AskWhatIsThe (`what is the`), AskWhatIsASubstituteFor (`what is a substitute for`), AskWhatAbout (`what about`), AskHow (`how`), AskHowDoI (`how do I`), AskHowDoYou (`how do you`), AskHowLong (`how long`), AskHowMuch (`how much`), AskHowMany (`how many`), AskWhy (`why`), AskWhen (`when`), AskWho (`who`), AskIs (`is`), AskAre (`are`), AskCan (`can`), AskCould (`could`), AskShould (`should`), Research (`research`), TellMeAbout (`tell me about`), TellMe (`tell me`), AskAnd (`and`). The worker rebuilds `${carrier} ${query}` from the intent name. `is`/`are`, `can`/`could`/`should`, and `tell me`/`tell me about` are separate because the word is part of the question. `whats` is on the what's intents so a missing apostrophe does not fall through to `what`. Each ask intent also has a `to …` sample, and the question-word ones have a `tell me …` sample, so "ask Frida to …" still matches when Alexa leaves "to" on the utterance.
+- `fallbackIntentSensitivity` is `LOW`, so a near-miss prefers a question intent over Fallback.
+- **AMAZON.YesIntent** and **AMAZON.NoIntent**, built-in, with empty sample lists (Amazon supplies the utterances).
 
 ### 5. Create the Cloudflare queue token (you type the secret; it never goes in a file)
 1. https://dash.cloudflare.com/profile/api-tokens → **Create Token** → **Create Custom Token** (Get started).
@@ -60,7 +95,53 @@ Files: `src/index.js` (entry), `src/app.js` (skill logic), `src/verify.js` (+`ro
    `~/box3-voice/slice1/hub.log` should show `alexa pull running`. Check without revealing anything: `cd ~/box3-voice/slice1/hub && .venv/bin/python alexa_pull.py --status`.
    Kill switch: set `ALEXA_PULL=0` in `~/box3-voice/local.env` (or delete the Keychain item) and restart.
 
-### 6. Name the rooms (3 Echos)
+### 6. Deploy the live link (do this yourself; this change was not deployed)
+
+This directory's config is `cloudflare.config.ts`, deployed with `cf`. There is no `wrangler.toml`. Do not also `wrangler deploy` it.
+
+From `alexa/`, after `node test/test.mjs`:
+
+```
+cf workers secrets update ALEXA_SKILL_ID --worker womble-alexa --type secret_text --text <skill-id>
+cf workers secrets update HUB_LINK_TOKEN --worker womble-alexa --type secret_text --text "$(security find-generic-password -s womble-hub-link -a "$USER" -w)"
+cf deploy
+```
+
+`ALEXA_SKILL_ID` is the existing secret. `HUB_LINK_TOKEN` is new and must be the same string as the Keychain item below. No model API key goes on this worker.
+
+The Durable Object is declared as an export, which is how `cf` creates the class (exports and a wrangler migrations array cannot both be set):
+
+```ts
+exports: { HubLink: exports.durableObject({ storage: "sqlite" }) }
+```
+
+The first `cf deploy` after this change creates the SQLite-backed class `HubLink` and the `HUB_LINK` binding (object name `hub`).
+
+Wrangler equivalents, for a tree that used wrangler. Do not run them here:
+
+```
+npx wrangler secret put ALEXA_SKILL_ID
+npx wrangler secret put HUB_LINK_TOKEN
+```
+
+```json
+{ "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HubLink"] }] }
+```
+
+On the hub Mac, add the matching token (the command prompts; nothing is echoed), then set the two lines in the untracked `local.env` (see `local.env.example`) and restart the hub:
+
+```
+security add-generic-password -a "$USER" -s womble-hub-link -U -w
+```
+
+```
+ALEXA_LINK=1
+ALEXA_WORKER_URL=wss://<worker-host>/hub
+```
+
+`HUB_LINK_TOKEN` in the environment overrides the Keychain item and is not required when the item exists. Leave `ALEXA_LINK_TEST_DELAY_S` unset except when checking the 6.5 s cutoff. After restart, `hub.log` should show `alexa link connected`. It does not print the worker URL or the token. `alexa link hop_ms` is the socket hop and excludes the model. The link stays off while `ALEXA_LINK` is anything other than `1`.
+
+### 7. Name the rooms (3 Echos)
 Say something to each Echo once. Each new one is saved in `hub/data/alexa_devices.json` as "Echo 1/2/3" and the frame toasts "New Echo". Edit `room`/`name` there (e.g. `"room": "Kitchen", "name": "Kitchen Echo"`); no restart needed.
 
 ## Poll interval and cost

@@ -16,7 +16,7 @@
 
 Womble #1 is Andrew's home voice assistant. Voice comes in from a BOX-3 or from the Echos (through the Alexa skill "Frida"). The Python hub on the Mac mini **petit** handles it: speech-to-text, a rule router, JSON lists and spoken replies. The kitchen picture frame shows the hub's UI. A Bluetooth thermal printer prints slips. Today it only does lists; everything else is on the roadmap.
 
-**Design rule:** nothing connects into the home network. There are no open ports and no tunnels. Alexa traffic reaches the hub because the hub pulls it from a Cloudflare Queue.
+**Design rule:** nothing connects into the home network. There are no open ports and no tunnels. Alexa traffic reaches the hub because the hub pulls a Cloudflare Queue, or, when the live link is on, because the hub opens an outbound WebSocket to the worker.
 
 ```mermaid
 flowchart LR
@@ -38,6 +38,7 @@ flowchart LR
   HUB -- "HTTPS POST (key womble-xai)" --> XAI
   HUB -- "HTTPS GET" --> OM
   ECHO --> ASK -- "HTTPS (signed)" --> W -- "send job" --> Q
+  HUB -- "outbound wss /hub (token womble-hub-link), only when ALEXA_LINK=1" --> W
   HUB -- "HTTP pull + ack (token womble-cf-queue)" --> Q
   HUB -. "manual: tools/btprint (RFCOMM ch1)" .-> PRN
   HUB -. "adb over Wi-Fi :5555 (Fully watchdog, every 20 s)" .- FRAME
@@ -47,7 +48,7 @@ flowchart LR
 ### Data flows
 
 1. **BOX-3 voice.** On-device micro_wake_word fires and calls `voice_assistant.start`. Audio streams over the ESPHome native API to `hub.py` (aioesphomeapi `subscribe_voice_assistant`). The adaptive energy VAD in `Session.feed` ends the utterance. `transcribe()` tries xAI STT and falls back to mlx-whisper. Then `route()` runs, `data/lists.json` is updated, the frame gets events (`voice.listening`, then `voice.heard`/`voice.cancel`, then `list.updated`/`reply`), and Kokoro TTS writes a WAV to `data/tts/`. The hub sends `TTS_END {url}` and the BOX-3 media player fetches and plays it. Timing is appended to `data/timing.jsonl`, post-wake audio is saved passively, and `data/last_utterance.wav` is overwritten.
-2. **Alexa / Frida.** "Alexa, ask Frida to add milk" goes to the Worker. The Worker verifies the signature and cert chain, checks a ±150 s timestamp window and the applicationId, then calls `QUEUE.send(job)` and Alexa says "On it." The hub's `AlexaPuller` pulls the queue and drops duplicate requestIds (`data/alexa_seen.json`). Jobs older than 10 min are reported as "missed" and not run. The same words within 10 s from any Echo are skipped. The device is mapped to a room (`data/alexa_devices.json`), the frame gets `voice.heard` with a room chip, and the text goes through the same `route()`. The result is shown on the frame. **Nothing is spoken back through the Echo** except the Worker's "On it."
+2. **Alexa / Frida.** "Alexa, ask Frida to add milk" goes to the Worker. The Worker verifies the signature and cert chain, checks a ±150 s timestamp window and the applicationId. When `AlexaLink` is connected (`ALEXA_LINK=1`, heartbeat within 30 s) the Worker pushes the job down the hub's outbound socket and the Echo speaks the router or brain answer; the frame shows the same card. At 1.2 s it says "One moment…". At 6.5 s it says "That's taking a while. I'll put it on the kitchen frame." and still enqueues the job. If the hub socket is down, it enqueues and says "On it." The hub's `AlexaPuller` pulls the queue and drops duplicate requestIds (`data/alexa_seen.json`); the live link claims the id first so a cutoff job is not shown twice. Jobs older than 10 min are reported as "missed" and not run. The same words within 10 s from any Echo are skipped. The device is mapped to a room (`data/alexa_devices.json`), the frame gets `voice.heard` with a room chip, and the text goes through `route()` then the brain. A follow-up stays in session `alexa:<sessionId>`. A brain answer leaves that session open with reprompt "Anything else?". A list action ends it.
 3. **Frame UI.** Fully Kiosk loads `GET /` (`static/display.html`) and opens `WS /ws`. The hub sends `snapshot` on connect, then events. The page sends `hello` and `tap` messages back. Local tools and tests can inject events with `POST /api/event`.
 4. **Printing (manual only).** A slip is built as an ESC/POS byte file (latest: `slice1/hub/print/job.bin`) and sent with `~/box3-voice/tools/btprint "$PRINTER_MAC" <file> [channel]` (`PRINTER_MAC=<printer-mac>` in `local.env`) over IOBluetooth RFCOMM. Nothing in the hub prints by itself yet; an agent builds and sends the slip on request. Format in §2.7.
 
@@ -60,6 +61,7 @@ flowchart LR
   * `hub.py`: STT, router, TTS, `Session` VAD, BOX-3 reconnect loop, web app.
   * `stt_xai.py`
   * `alexa_pull.py`
+  * `alexa_link.py`: outbound WebSocket to the worker. Off unless `ALEXA_LINK=1`.
   * `display.py`
   * `recorder.py`: wake-word sample recorder.
   * `smoke.py`, `replay_vad.py`, `test_session.py`: dev helpers.
@@ -80,6 +82,9 @@ flowchart LR
 | XAI_STT_TIMEOUT | 5 | seconds |
 | TTS_ENGINE | kokoro | `say` forces macOS say |
 | ALEXA_PULL | 1 | `0` disables the puller |
+| ALEXA_LINK | 0 | `1` opens the outbound hub socket |
+| ALEXA_WORKER_URL | unset | `wss://<worker-host>/hub` |
+| ALEXA_LINK_TEST_DELAY_S | unset | delays each live answer; leave unset |
 | ALEXA_POLL_S / ALEXA_IDLE_POLL_S / ALEXA_NIGHT_POLL_S | 2 / 5 / 15 | poll interval: active (message in the last 10 min) / idle / 23:00–07:00 |
 | CF_ACCOUNT_ID, CF_QUEUE_ID | (required, local.env; no default) | CF account `<acct>` and queue `<queue-id>`. Old names ALEXA_CF_ACCOUNT / ALEXA_QUEUE_ID still work. If unset the puller logs an error and stays off. |
 | ALEXA_KC_ACCOUNT | `decoy` | Keychain account |
@@ -127,7 +132,7 @@ flowchart LR
   * `test_recorder.py`: fake device.
   * `fake_driver.py`: needs playwright + Chromium and takes display screenshots.
   * Also in `data/`: `live_stt_test.py` (live, uses the key) and `smoke.jsonl`.
-* **Known issues:** TTS files pile up. (`lists.json` writes are atomic: temp file, fsync, `os.replace`.) The BOX-3 log shows "display took a long time" warnings (harmless). Any Echo reply other than "On it." would need the progressive response API **\[not built\]**.
+* **Known issues:** TTS files pile up. (`lists.json` writes are atomic: temp file, fsync, `os.replace`.) The BOX-3 log shows "display took a long time" warnings (harmless). The Echo speaks a live answer only while the hub socket is up; otherwise it still says "On it." The worker's own model fallback is not built.
 * **Boundary:** the hub owns the lists and the router. Home Assistant and announce-bridge work belong to other bots.
 
 ### 2.2 Display service and frame page (`slice1/hub/display.py`, `static/display.html`, spec `DISPLAY.md`)
@@ -189,19 +194,19 @@ flowchart LR
 ### 2.5 Alexa Worker (`alexa/`)
 
 * **Files:**
-  * `src/index.js`: entry; always verifies the request.
+  * `src/index.js`: entry. `/hub` is the Durable Object socket; every other path is the skill and always verifies the request.
   * `src/app.js`: `handle(request, env, verify)`.
-  * `src/verify.js` + `roots.js`: cert URL, chain and signature checks.
-  * `cloudflare.config.ts`: worker `womble-alexa`, compat date 2026-09-30, workersDev, observability **off** (spoken text is never logged), bindings `QUEUE` (queue womble-alexa) and secret `ALEXA_SKILL_ID`.
+  * `src/hub_link.js`: `HubLink` Durable Object (hibernating WebSocket).
+  * `src/verify.js` + `roots.js`: cert URL, chain and signature checks. Unchanged.
+  * `cloudflare.config.ts`: worker `womble-alexa`, compat date 2026-09-30, workersDev, observability **off** (spoken text is never logged), bindings `QUEUE` (queue womble-alexa), secrets `ALEXA_SKILL_ID` and `HUB_LINK_TOKEN`, and SQLite Durable Object export `HubLink` bound as `HUB_LINK`.
   * `skill/interaction-model.en-GB.json`
   * `test/test.mjs`
-* **Endpoint:** `POST <worker-url>/` or `/alexa` (the workers.dev URL `cf deploy` prints). Any other method or path returns 404. A bad or unconfigured request returns 400 with an `x-reason` header (skill id not configured / signature / json / timestamp / application id).
+* **Endpoint:** `POST <worker-url>/` or `/alexa` (the workers.dev URL `cf deploy` prints). `GET` with `Upgrade: websocket` on `/hub` is the hub socket and requires bearer `HUB_LINK_TOKEN`. Any other method or path returns 404. A bad or unconfigured skill request returns 400 with an `x-reason` header (skill id not configured / signature / json / timestamp / application id). A bad hub token returns 401; a foreign `Origin` returns 403.
 * **Interaction model** (invocation `frida`):
   * AddIntent, FindIntent, SaveIntent and RememberIntent each send text prefixed with their verb (add / find / save / remember).
-  * CaptureIntent sends the raw query.
-  * All use the slot `query:AMAZON.SearchQuery`.
-  * Built-in intents: Help, Stop, Cancel, NavigateHome, Fallback.
-* **Queue job:** `{v:1, text, deviceId, ts, requestId, intent, locale, source:"alexa"}`, sent with contentType json. If the send fails, Alexa says "Womble's not reachable, try again."
+  * CaptureIntent sends the raw query. Each question carrier is its own intent (`AskWhatIntent`, `AskWhatsAIntent`, `AskWhatsASubstituteForIntent`, `AskHowDoIIntent`, `AskIsIntent`, `ResearchIntent`, and the rest in `alexa/README.md`) with a single `AMAZON.SearchQuery` slot. The worker prefixes the slot with the carrier from the intent name. A query that already starts with that carrier is sent as it is. Longer samples ("what's a …", "what's a substitute for …", and a "to …" form of each) are what a one-shot "ask Frida …" has to match. Fallback sensitivity is LOW.
+  * Built-in intents: Help, Stop, Cancel, NavigateHome, Yes, No, Fallback.
+* **Queue job:** `{v:1, text, deviceId, ts, requestId, intent, locale, source:"alexa", sessionId}`, sent with contentType json, on the offline path and on the 6.5 s cutoff. A fast live answer is not queued. If the send fails, Alexa says "Womble's not reachable, try again."
 * **Queue settings** (from alexa/README): HTTP pull consumer, batch 10, visibility 60 s, max retries 3, retry delay 5 s.
 * **Test:** `cd ~/box3-voice/alexa && export PATH=~/.local/node/bin:$PATH && node test/test.mjs`.
 * **Deploy:** `cf deploy`. Node ≥ 22.18 is required.
@@ -215,6 +220,7 @@ flowchart LR
 * **Errors:** a 401 or 403 stops the puller until restart and toasts "Alexa link: token problem". A 429 or 5xx triggers exponential backoff from 2 to 60 s.
 * **Enabled when** `ALEXA_PULL!=0` **and** the Keychain item `womble-cf-queue` exists. The existence check does not read the secret.
 * **Check without revealing secrets:** `.venv/bin/python alexa_pull.py --status`.
+* **Live link** (`alexa_link.py`): outbound WebSocket, enabled only when `ALEXA_LINK=1`. Token is Keychain `womble-hub-link` (account `$USER`) or `HUB_LINK_TOKEN`. It shares `Seen`, `Devices` and the recent-text map with the puller. Deploy and the console rebuild are in `alexa/README.md`.
 * **Files:**
   * `data/alexa_devices.json`: `{deviceId: {room, name, first_seen}}`. It is re-read on every job, so hand edits apply without a restart. Unknown devices are added as "Echo N".
   * `data/alexa_seen.json`: the last 500 requestIds.

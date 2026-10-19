@@ -92,6 +92,151 @@
           ]
         },
         {
+          "name": "AskWhatIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what {query}", "to what {query}", "tell me what {query}"]
+        },
+        {
+          "name": "AskWhatsIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what's {query}", "whats {query}", "to what's {query}", "to whats {query}", "tell me what's {query}", "tell me whats {query}"]
+        },
+        {
+          "name": "AskWhatsAIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what's a {query}", "whats a {query}", "to what's a {query}", "to whats a {query}", "tell me what's a {query}", "tell me whats a {query}"]
+        },
+        {
+          "name": "AskWhatsTheIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what's the {query}", "whats the {query}", "to what's the {query}", "to whats the {query}", "tell me what's the {query}", "tell me whats the {query}"]
+        },
+        {
+          "name": "AskWhatsASubstituteForIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what's a substitute for {query}", "whats a substitute for {query}", "to what's a substitute for {query}", "to whats a substitute for {query}", "tell me what's a substitute for {query}"]
+        },
+        {
+          "name": "AskWhatsTheSubstituteForIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what's the substitute for {query}", "whats the substitute for {query}", "to what's the substitute for {query}", "tell me what's the substitute for {query}"]
+        },
+        {
+          "name": "AskWhatIsIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what is {query}", "to what is {query}", "tell me what is {query}"]
+        },
+        {
+          "name": "AskWhatIsAIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what is a {query}", "to what is a {query}", "tell me what is a {query}"]
+        },
+        {
+          "name": "AskWhatIsTheIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what is the {query}", "to what is the {query}", "tell me what is the {query}"]
+        },
+        {
+          "name": "AskWhatIsASubstituteForIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what is a substitute for {query}", "to what is a substitute for {query}", "tell me what is a substitute for {query}"]
+        },
+        {
+          "name": "AskWhatAboutIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["what about {query}", "to what about {query}", "tell me what about {query}"]
+        },
+        {
+          "name": "AskHowIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how {query}", "to how {query}", "tell me how {query}"]
+        },
+        {
+          "name": "AskHowDoIIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how do I {query}", "to how do I {query}", "tell me how do I {query}"]
+        },
+        {
+          "name": "AskHowDoYouIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how do you {query}", "to how do you {query}", "tell me how do you {query}"]
+        },
+        {
+          "name": "AskHowLongIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how long {query}", "to how long {query}", "tell me how long {query}"]
+        },
+        {
+          "name": "AskHowMuchIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how much {query}", "to how much {query}", "tell me how much {query}"]
+        },
+        {
+          "name": "AskHowManyIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["how many {query}", "to how many {query}", "tell me how many {query}"]
+        },
+        {
+          "name": "AskWhyIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["why {query}", "to why {query}", "tell me why {query}"]
+        },
+        {
+          "name": "AskWhenIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["when {query}", "to when {query}", "tell me when {query}"]
+        },
+        {
+          "name": "AskWhoIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["who {query}", "to who {query}", "tell me who {query}"]
+        },
+        {
+          "name": "AskIsIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["is {query}", "to is {query}"]
+        },
+        {
+          "name": "AskAreIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["are {query}", "to are {query}"]
+        },
+        {
+          "name": "AskCanIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["can {query}", "to can {query}"]
+        },
+        {
+          "name": "AskCouldIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["could {query}", "to could {query}"]
+        },
+        {
+          "name": "AskShouldIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["should {query}", "to should {query}"]
+        },
+        {
+          "name": "ResearchIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["research {query}", "to research {query}"]
+        },
+        {
+          "name": "TellMeAboutIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["tell me about {query}", "to tell me about {query}"]
+        },
+        {
+          "name": "TellMeIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["tell me {query}", "to tell me {query}"]
+        },
+        {
+          "name": "AskAndIntent",
+          "slots": [{ "name": "query", "type": "AMAZON.SearchQuery" }],
+          "samples": ["and {query}", "to and {query}"]
+        },
+        {
           "name": "AMAZON.HelpIntent",
           "samples": []
         },
@@ -108,11 +253,24 @@
           "samples": []
         },
         {
+          "name": "AMAZON.YesIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NoIntent",
+          "samples": []
+        },
+        {
           "name": "AMAZON.FallbackIntent",
           "samples": []
         }
       ],
-      "types": []
+      "types": [],
+      "modelConfiguration": {
+        "fallbackIntentSensitivity": {
+          "level": "LOW"
+        }
+      }
     }
   }
 }
