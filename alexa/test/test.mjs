@@ -420,7 +420,9 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
 {
   const model = JSON.parse(readFileSync(new URL("../skill/interaction-model.en-GB.json", import.meta.url), "utf8"));
   const lang = model.interactionModel.languageModel;
-  assert.deepEqual(lang.types, []);
+  assert.deepEqual(lang.types.map((t) => t.name), ["MEDIA_NAME", "ROOM"]);
+  assert.ok(!lang.intents.some((i) => i.name === "SpikeIntent"), "SpikeIntent left in the model");
+  for (const b of ["AMAZON.PauseIntent", "AMAZON.ResumeIntent"]) assert.ok(lang.intents.some((i) => i.name === b), b);
   assert.equal(lang.modelConfiguration.fallbackIntentSensitivity.level, "LOW");
   const listIntents = new Set(["AddIntent", "FindIntent", "SaveIntent", "RememberIntent", "CaptureIntent"]);
   const seen = new Map();
@@ -648,4 +650,6 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
   ok("request type is logged, and a one-shot or fallback transcript reaches the hub");
 }
 assert.ok(sent.length >= qBefore);
+const { runMediaTests } = await import("./media.mjs");
+await runMediaTests(ok);
 console.log(`ALL ${n} PASSED`);

@@ -148,7 +148,34 @@ export class HubLink {
     }
     // Internal only: the worker calls this. The public route never forwards POST.
     if (request.method === "POST" && url.pathname === "/dispatch") return this._dispatch(request);
+    if (request.method === "POST" && url.pathname === "/media") return this._media(request);
     return new Response("not found", { status: 404 });
+  }
+
+  // Media state (M2): resume offsets, last play per device, episode URLs.
+  // Keys must start with "media:"; only the worker reaches this (the public /hub route never maps to /media).
+  async _media(request) {
+    let req;
+    try { req = await request.json(); } catch { return new Response("bad", { status: 400 }); }
+    const store = this.ctx?.storage;
+    if (!store) return new Response("no storage", { status: 503 });
+    const okKey = (k) => typeof k === "string" && k.startsWith("media:") && k.length <= 128;
+    const okKeys = (ks) => Array.isArray(ks) && ks.length > 0 && ks.length <= 32 && ks.every(okKey);
+    if (req?.op === "get" && okKeys(req.keys)) {
+      const got = await store.get(req.keys);
+      const values = {};
+      for (const k of req.keys) values[k] = (got instanceof Map ? got.get(k) : got?.[k]) ?? null;
+      return Response.json({ values });
+    }
+    if (req?.op === "put" && req.values && typeof req.values === "object" && okKeys(Object.keys(req.values))) {
+      await store.put(req.values);
+      return Response.json({ ok: true });
+    }
+    if (req?.op === "delete" && okKeys(req.keys)) {
+      await store.delete(req.keys);
+      return Response.json({ ok: true });
+    }
+    return new Response("bad", { status: 400 });
   }
 
   _upgrade(request) {

@@ -3,6 +3,7 @@ import {
   CUTOFF_MS, DEFAULT_REPROMPT, FRAME_LINE, PROGRESSIVE_LINE, PROGRESSIVE_MS,
   hubStub, plainSpeech, toSsml,
 } from "./hub_link.js";
+import { handleMedia } from "./media/player.js";
 
 const MAX_SKEW_S = 150;
 const CARRIER_INTENTS = { AddIntent: "add", FindIntent: "find", SaveIntent: "save", RememberIntent: "remember" };
@@ -341,6 +342,14 @@ export async function handle(request, env, verify, deps = {}) {
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > MAX_SKEW_S * 1000) return bad("timestamp");
   const appId = body.session?.application?.applicationId ?? body.context?.System?.application?.applicationId;
   if (appId !== env.ALEXA_SKILL_ID) return bad("application id");
+
+  // Media (M2): AudioPlayer / PlaybackController events, media intents, and
+  // "play …" / "what's in my library" spoken through the older carrier intents.
+  let mediaText = null;
+  if (req.type === "LaunchRequest" || req.intent?.name === "AMAZON.FallbackIntent") mediaText = heardText(req);
+  else if (req.type === "IntentRequest") mediaText = intentText(req.intent?.name, req.intent);
+  const media = await handleMedia(body, env, deps, mediaText);
+  if (media) return json(media);
 
   if (req.type === "SessionEndedRequest") {
     logAlexaRequest(req);
