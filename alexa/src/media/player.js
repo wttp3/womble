@@ -7,7 +7,7 @@
 // enclosure chain plays as published, Alexa sends NO PlaybackStarted events,
 // and PlaybackStopped carries the offset.
 import { hubStub, toSsml } from "../hub_link.js";
-import { LIBRARY } from "./library.js";
+import { LIBRARY, Library } from "./library.js";
 import { epKey, episodes, fetchItems } from "./rss.js";
 
 export const RESUME_MIN_MS = 30_000;
@@ -78,21 +78,81 @@ export async function deviceKey(body) {
 
 // ---------- text matching (works with the old model too) ----------
 const LIST_RE = /^(?:what(?:'s| is)|whats) (?:in )?(?:my |the |your )?(?:media )?library\??$|^what (?:can|do) (?:you|i|frida) (?:play|have)\??$|^(?:list|read) (?:my |the )?(?:media )?library$/i;
-const PLAY_RE = /^(?:please |to |and )?(?:play|put on|start|listen to)(?: me)?(?: the)?\s+(?:(latest|newest|last|new)\s+)?(?:episode (?:of )?)?(.+?)(?:\s+(?:in|on) the \w+)?[.!?]?$/i;
+const PLAY_RE = /^(?:please |to |and )?(?:play|put on|start|listen to)(?: me)?(?: the)?\s+(?:(latest|newest|last|new)\s+)?(?:episode (?:of )?)?(.+?)(?:\s+(?:in|on) the (\w+(?: room)?))?[.!?]?$/i;
 const RESUME_RE = /^(?:please |to )?(?:resume|continue|carry on with)(?: the)?\s+(.+?)[.!?]?$/i;
 
-export function mediaIntentFromText(text) {
-  const t = String(text || "").replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim();
+const cleanText = (text) => String(text || "").replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim();
+
+// Cheap gate: could this text be a media request at all? (no DO read)
+export function looksLikeMedia(text) {
+  const t = cleanText(text);
+  return !!t && (LIST_RE.test(t) || RESUME_RE.test(t) || PLAY_RE.test(t));
+}
+
+export function mediaIntentFromText(text, lib = LIBRARY) {
+  const t = cleanText(text);
   if (!t) return null;
   if (LIST_RE.test(t)) return { op: "list" };
   let m = RESUME_RE.exec(t);
-  if (m) { const e = LIBRARY.match(m[1]); return e ? { op: "play", entry: e, mode: "resume" } : null; }
+  if (m) { const e = lib.match(m[1]); return e ? { op: "play", entry: e, mode: "resume", room: null } : null; }
   m = PLAY_RE.exec(t);
   if (m) {
-    const e = LIBRARY.match(m[2]);
-    return e ? { op: "play", entry: e, mode: m[1] ? "latest" : "auto" } : null;
+    const e = lib.match(m[2]);
+    return e ? { op: "play", entry: e, mode: m[1] ? "latest" : "auto", room: m[3] || null } : null;
   }
   return null;
+}
+
+// Library: the hub's snapshot when it has pushed one (M3), else the seed.
+async function loadLibrary(store) {
+  const snap = (await store.get("media:snapshot"))["media:snapshot"];
+  return Array.isArray(snap?.entries) && snap.entries.length ? new Library(snap.entries) : LIBRARY;
+}
+
+// Worker -> hub event for the frame (best effort, never blocks a reply for long).
+function notify(ctx, msg) {
+  const stub = ctx.store.stub;
+  if (!stub) return;
+  const p = stub.fetch("https://hub.internal/notify", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "media.event", device: ctx.dev, ...msg }),
+  }).catch(() => {});
+  if (ctx.deps.waitUntil) ctx.deps.waitUntil(p);
+  else ctx.pending.push(p);
+}
+
+export const HUB_MEDIA_MS = 3000;
+
+// Ask the hub how to play (M3). null = hub offline or too slow: play locally.
+async function askHub(body, ctx, env, media) {
+  const stub = ctx.store.stub;
+  if (!stub) return null;
+  const req = body.request || {};
+  try {
+    const r = await stub.fetch("https://hub.internal/dispatch", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: req.requestId, text: "", intent: req.intent?.name || req.type, deviceId: body.context?.System?.device?.deviceId || null,
+        sessionId: body.session?.sessionId || null, locale: req.locale || null,
+        deadline: Date.now() + (ctx.deps.hubMediaMs ?? HUB_MEDIA_MS), media,
+      }),
+    });
+    const a = await r.json();
+    if (!a || a.offline || a.timeout || !a.media) return null;
+    return a;
+  } catch { return null; }
+}
+
+async function routedPlay(body, ctx, env, entry, mode, room) {
+  const a = await askHub(body, ctx, env, { op: "play", entry_id: entry.id, name: entry.name, room: room || null, mode });
+  if (ctx.deps.trace) ctx.deps.trace.forwarded = a ? `hub-media:${a.media.route}` : undefined;
+  if (!a) return playEntry(entry, ctx, { mode });
+  if (a.media.route === "frida") {
+    const e = (a.media.entry_id && ctx.lib.get(a.media.entry_id)) || entry;
+    return playEntry(e, ctx, { mode: a.media.mode || mode });
+  }
+  if (ctx.deps.trace) ctx.deps.trace.entry = entry.id;
+  return sayRes(a.speech || "OK.");
 }
 
 function slotText(intent, name) {
@@ -135,6 +195,7 @@ async function playEntry(entry, ctx, { mode = "auto", index = 0, quiet = false }
     const token = makeToken(entry.id, LIVE);
     await store.put({ [`media:last:${dev}`]: { token, offset_ms: 0, url, entry_id: entry.id } });
     console.log(`media play entry=${entry.id} kind=radio`);
+    notify(ctx, { event: "play", entry_id: entry.id, title: entry.name, offset_ms: 0, duration_s: 0 });
     return playRes(url, token, 0, quiet ? null : `Playing ${entry.name}.`);
   }
   let eps;
@@ -157,6 +218,7 @@ async function playEntry(entry, ctx, { mode = "auto", index = 0, quiet = false }
     [`media:last:${dev}`]: { token, offset_ms: offset, url: ep.url, entry_id: entry.id },
   });
   console.log(`media play entry=${entry.id} kind=podcast ep=${key} offset_ms=${offset} index=${index}`);
+  notify(ctx, { event: "play", entry_id: entry.id, ep_key: key, title: ep.title, offset_ms: offset, duration_s: ep.durationS || 0 });
   let text = null;
   if (!quiet) {
     text = offset ? `Resuming ${entry.name} from ${minutes(offset)} minute${minutes(offset) === 1 ? "" : "s"}.`
@@ -178,21 +240,23 @@ async function current(body, ctx) {
 async function resume(body, ctx, quiet) {
   const cur = await current(body, ctx);
   if (!cur) return quiet ? emptyRes() : sayRes("There's nothing to resume.");
-  const entry = LIBRARY.get(cur.entryId);
+  const entry = ctx.lib.get(cur.entryId);
   if (cur.key === LIVE) return entry ? playEntry(entry, ctx, { quiet: true }) : emptyRes();
   let url = cur.url;
   if (!url) url = (await ctx.store.get(`media:ep:${cur.key}`))[`media:ep:${cur.key}`]?.url;
   if (!url) return entry ? playEntry(entry, ctx, { quiet }) : sayRes("There's nothing to resume.");
   console.log(`media resume entry=${cur.entryId} ep=${cur.key} offset_ms=${cur.offset}`);
+  const epRec = (await ctx.store.get(`media:ep:${cur.key}`))[`media:ep:${cur.key}`];
+  notify(ctx, { event: "play", entry_id: cur.entryId, ep_key: cur.key, title: epRec?.title || entry?.name, offset_ms: cur.offset, duration_s: epRec?.duration_s || 0 });
   return playRes(url, cur.token, cur.offset, null);
 }
 
 async function step(body, ctx, dir, quiet) {
   const cur = await current(body, ctx);
-  const entry = cur && LIBRARY.get(cur.entryId);
+  const entry = cur && ctx.lib.get(cur.entryId);
   if (!entry) return quiet ? emptyRes() : sayRes("Nothing is playing.");
   if (cur.key === LIVE) {
-    const radios = LIBRARY.entries("radio");
+    const radios = ctx.lib.entries("radio");
     const i = radios.findIndex((e) => e.id === entry.id);
     const next = radios[(i + dir + radios.length) % radios.length];
     return playEntry(next, ctx, { quiet });
@@ -224,11 +288,15 @@ async function onEvent(body, ctx) {
   if (type === "AudioPlayer.PlaybackFailed" || type === "System.ExceptionEncountered") {
     const err = req.error || {};
     console.log(`media event=${type} err=${String(err.type || "-").slice(0, 60)} msg=${String(err.message || "-").replace(/https?:\/\/\S+/g, "<url>").slice(0, 120)}`);
+    const ft = parseToken(req.token);
+    if (ft) notify(ctx, { event: "failed", entry_id: ft.entryId, ep_key: ft.key === LIVE ? null : ft.key, error: String(err.type || "").slice(0, 60) });
     return emptyRes();
   }
   if (!t) return emptyRes();
   console.log(`media event=${type} entry=${t.entryId} ep=${t.key} offset_ms=${off}`);
   const lastKey = `media:last:${ctx.dev}`;
+  if (type === "AudioPlayer.PlaybackStopped") notify(ctx, { event: "stopped", entry_id: t.entryId, ep_key: t.key === LIVE ? null : t.key, offset_ms: off });
+  if (type === "AudioPlayer.PlaybackFinished") notify(ctx, { event: "finished", entry_id: t.entryId, ep_key: t.key === LIVE ? null : t.key, offset_ms: 0 });
   if (type === "AudioPlayer.PlaybackStopped" || type === "AudioPlayer.PlaybackStarted") {
     const prev = (await ctx.store.get(lastKey))[lastKey];
     const url = prev && prev.token === req.token ? prev.url : undefined;
@@ -263,12 +331,22 @@ export async function handleMedia(body, env, deps = {}, text = null) {
     const builtin = ["AMAZON.PauseIntent", "AMAZON.ResumeIntent", "AMAZON.NextIntent", "AMAZON.PreviousIntent",
       "AMAZON.StartOverIntent", ...UNSUPPORTED].includes(name);
     const stopLike = ["AMAZON.StopIntent", "AMAZON.CancelIntent"].includes(name) && ours(body);
-    if (!builtin && !stopLike && !MEDIA_INTENTS.has(name)) {
-      parsed = mediaIntentFromText(text);
-      if (!parsed) return null;
-    }
+    if (!builtin && !stopLike && !MEDIA_INTENTS.has(name) && !looksLikeMedia(text)) return null;
   }
-  const ctx = { store: new MediaStore(deps.hub ?? env.HUB_LINK, deps.now), dev: await deviceKey(body), deps };
+  const ctx = { store: new MediaStore(deps.hub ?? env.HUB_LINK, deps.now), dev: await deviceKey(body), deps, pending: [] };
+  ctx.lib = await loadLibrary(ctx.store);
+  const name0 = name;
+  if (!isEvent && !["AMAZON.PauseIntent", "AMAZON.ResumeIntent", "AMAZON.NextIntent", "AMAZON.PreviousIntent",
+    "AMAZON.StartOverIntent", "AMAZON.StopIntent", "AMAZON.CancelIntent", ...UNSUPPORTED].includes(name0) && !MEDIA_INTENTS.has(name0)) {
+    parsed = mediaIntentFromText(text, ctx.lib);
+    if (!parsed) return null;
+  }
+  const res = await mediaReply(body, env, ctx, req, type, isEvent, name, parsed);
+  if (ctx.pending.length) await Promise.all(ctx.pending);
+  return res;
+}
+
+async function mediaReply(body, env, ctx, req, type, isEvent, name, parsed) {
 
   if (type === "PlaybackController.PauseCommandIssued") return stopRes();
   if (type === "PlaybackController.PlayCommandIssued") return resume(body, ctx, true);
@@ -276,18 +354,19 @@ export async function handleMedia(body, env, deps = {}, text = null) {
   if (type === "PlaybackController.PreviousCommandIssued") return step(body, ctx, -1, true);
   if (isEvent) return onEvent(body, ctx);
 
-  if (parsed?.op === "list" || name === "ListLibraryIntent") return sayRes(LIBRARY.summary());
-  if (parsed?.op === "play") return playEntry(parsed.entry, ctx, { mode: parsed.mode });
+  if (parsed?.op === "list" || name === "ListLibraryIntent") return sayRes(ctx.lib.summary());
+  if (parsed?.op === "play") return routedPlay(body, ctx, env, parsed.entry, parsed.mode, parsed.room);
   if (MEDIA_INTENTS.has(name)) {
     const slot = slotText(req.intent, "media");
     // "play the latest X" can land on PlayMediaIntent with "latest X" in the slot.
     const latestWord = /^(?:the )?(?:latest|newest|new)\s+(?:episode (?:of )?)?/i;
     const bare = slot.value.replace(latestWord, "");
-    const entry = (slot.id && LIBRARY.get(slot.id)) || LIBRARY.match(slot.value) || LIBRARY.match(bare);
+    const entry = (slot.id && ctx.lib.get(slot.id)) || ctx.lib.match(slot.value) || ctx.lib.match(bare);
     if (!entry) return sayRes(slot.value ? `${slot.value} isn't in the library yet.` : "What should I play?");
     let mode = name === "PlayLatestMediaIntent" ? "latest" : name === "ResumeMediaIntent" ? "resume" : "auto";
     if (mode === "auto" && bare !== slot.value) mode = "latest";
-    return playEntry(entry, ctx, { mode });
+    const room = slotText(req.intent, "room").value || null;
+    return routedPlay(body, ctx, env, entry, mode, room);
   }
   switch (name) {
     case "AMAZON.PauseIntent":

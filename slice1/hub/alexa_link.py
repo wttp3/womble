@@ -128,6 +128,8 @@ class AlexaLink:
         self.token_retry = TOKEN_RETRY_S
         self.jitter = True
         self._answers = {}
+        self.ws = None
+        self.media = None          # media.service.MediaService, set by the hub (M3)
 
     def enabled(self) -> bool:
         return os.environ.get("ALEXA_LINK", "0") == "1"
@@ -182,8 +184,42 @@ class AlexaLink:
             bool(reply.get("end_session", True)),
         )
 
+    async def send_typed(self, msg: dict) -> bool:
+        """Hub -> DO message without a job id (media snapshot, pending dispatch)."""
+        ws = self.ws
+        if ws is None or ws.closed:
+            return False
+        try:
+            await ws.send_str(json.dumps(msg))
+            return True
+        except Exception as e:
+            log.warning("alexa link send failed (%s)", type(e).__name__)
+            return False
+
+    async def _media_job(self, job: dict) -> dict:
+        """Play request routed by the hub (M3). The worker builds the directive."""
+        m = job.get("media") or {}
+        dev, _ = self.devices.lookup(job.get("deviceId"))
+        echo = dev.get("room", "Echo")
+        if self.media is None:
+            return {"id": job.get("id"), "speech": "", "end_session": True, "media": {"route": "frida",
+                    "entry_id": m.get("entry_id"), "mode": m.get("mode") or "auto"}}
+        op = m.get("op") or "play"
+        if op == "stop":
+            res = await self.media.stop(room=m.get("room"), source="alexa", echo=echo)
+            res = {**res, "route": "none"}
+        else:
+            res = await self.media.play(name=m.get("name"), entry_id=m.get("entry_id"), room=m.get("room"),
+                                        source="alexa", echo=echo, mode=m.get("mode") or "auto")
+        log.info("alexa media job op=%s entry=%s room=%s echo=%s route=%s", op, res.get("entry_id") or "-",
+                 m.get("room") or "-", echo, res.get("route"))
+        return {"id": job.get("id"), "speech": plain_speech(res.get("speech") or ""), "end_session": True,
+                "media": {k: res.get(k) for k in ("route", "entry_id", "mode", "ok") if res.get(k) is not None}}
+
     async def handle_job(self, job: dict) -> dict:
         rid = job.get("id") or job.get("requestId")
+        if job.get("media"):
+            return await self._media_job(job)
         text = (job.get("text") or job.get("question") or "").strip()
         dev, new = self.devices.lookup(job.get("deviceId"))
         room = dev.get("room", "Echo")
@@ -239,6 +275,9 @@ class AlexaLink:
             job = json.loads(data)
         except (ValueError, TypeError):
             return
+        if isinstance(job, dict) and job.get("type") and not job.get("id"):
+            await self._on_typed(job)
+            return
         if not isinstance(job, dict) or not (job.get("id") or job.get("requestId")):
             return
         try:
@@ -250,6 +289,13 @@ class AlexaLink:
             self._log_job(job, (job.get("text") or job.get("question") or "").strip(),
                           session_key(job.get("sessionId"), "Echo"), reply)
         await ws.send_str(json.dumps(reply))
+
+    async def _on_typed(self, msg: dict):
+        if msg.get("type") == "media.event" and self.media is not None:
+            try:
+                await self.media.on_event(msg)
+            except Exception as e:
+                log.warning("media event failed (%s)", type(e).__name__)
 
     async def _ping(self, ws):
         while True:
@@ -270,8 +316,11 @@ class AlexaLink:
                 ssl=ssl,
             ) as ws:
                 self.state = "connected"
+                self.ws = ws
                 log.info("alexa link connected")
                 pinger = asyncio.create_task(self._ping(ws))
+                if self.media is not None:
+                    asyncio.create_task(self.media.push_snapshot())
                 try:
                     async for msg in ws:
                         if msg.type == WSMsgType.TEXT:
@@ -279,6 +328,7 @@ class AlexaLink:
                         elif msg.type in (WSMsgType.CLOSED, WSMsgType.CLOSING, WSMsgType.ERROR):
                             break
                 finally:
+                    self.ws = None
                     pinger.cancel()
                     with contextlib.suppress(asyncio.CancelledError, Exception):
                         await pinger

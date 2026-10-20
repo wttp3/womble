@@ -150,8 +150,33 @@ export class HubLink {
     if (request.method === "POST" && url.pathname === "/dispatch") return this._dispatch(request);
     if (request.method === "POST" && url.pathname === "/media") return this._media(request);
     if (request.method === "POST" && url.pathname === "/reqlog") return this._reqlogAdd(request);
+    if (request.method === "POST" && url.pathname === "/notify") return this._notify(request);
     if (request.method === "GET" && url.pathname === "/reqlog") return this._reqlogRead();
     return new Response("not found", { status: 404 });
+  }
+
+  // Hub -> DO messages without a job id (M3/M4).
+  async _typed(msg) {
+    const store = this.ctx?.storage;
+    if (!store) return;
+    if (msg.type === "media.snapshot" && Array.isArray(msg.entries) && msg.entries.length <= 500) {
+      const vals = { "media:snapshot": { entries: msg.entries, at: Date.now() } };
+      if (msg.latest && typeof msg.latest === "object") vals["media:latest"] = { entries: msg.latest, at: Date.now() };
+      await store.put(vals);
+    } else if (msg.type === "media.pending" && /^[0-9a-f]{16}$/.test(msg.device || "") && msg.cmd && typeof msg.cmd === "object") {
+      const ttl = Math.min(120, Math.max(5, Number(msg.ttl_s) || 60));
+      await store.put(`media:pending:${msg.device}`, { cmd: msg.cmd, at: Date.now(), until: Date.now() + ttl * 1000 });
+    }
+  }
+
+  // Worker -> hub, best effort (media events for the frame). No reply expected.
+  async _notify(request) {
+    let msg;
+    try { msg = await request.json(); } catch { return new Response("bad", { status: 400 }); }
+    const ws = this.freshSocket();
+    if (!ws || !msg || typeof msg !== "object" || msg.id) return Response.json({ sent: false });
+    try { ws.send(JSON.stringify(msg)); } catch { return Response.json({ sent: false }); }
+    return Response.json({ sent: true });
   }
 
   async _reqlogAdd(request) {
@@ -219,6 +244,7 @@ export class HubLink {
       locale: job.locale ?? null,
       deadline: job.deadline ?? null,
     };
+    if (job.media && typeof job.media === "object") payload.media = job.media;
     const waitMs = Math.min(
       DISPATCH_GRACE_MS,
       Math.max(50, (typeof payload.deadline === "number" ? payload.deadline - Date.now() : DISPATCH_GRACE_MS) + 500),
@@ -256,6 +282,7 @@ export class HubLink {
       const att = ws.deserializeAttachment?.() || {};
       ws.serializeAttachment?.({ ...att, lastApp: Date.now() });
     } catch { /* attachment is optional */ }
+    if (!msg.id && typeof msg.type === "string") return this._typed(msg);
     const waiter = msg.id ? this.pending.get(msg.id) : null;
     if (!waiter) return;
     waiter.resolve({
@@ -263,6 +290,7 @@ export class HubLink {
       speech: msg.speech ?? "",
       end_session: msg.end_session !== false,
       reprompt: msg.reprompt,
+      ...(msg.media && typeof msg.media === "object" ? { media: msg.media } : {}),
     });
   }
 

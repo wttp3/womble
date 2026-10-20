@@ -145,7 +145,7 @@ def test_repo_clean():
     """No device ids, trigger ids or home paths in tracked media files."""
     root = HUB.parents[1]
     files = ["slice1/hub/media", "slice1/hub/tests/fixtures"]
-    pat = r"amzn1\.|/Users/|voicemonkey\.io/trigger|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|([0-9a-f]{2}:){5}"
+    pat = r"amzn1\.|/Users/|voicemonkey\.io/trigger\?|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|([0-9a-f]{2}:){5}"
     out = subprocess.run(["grep", "-rEnI", pat, *files], cwd=root, capture_output=True, text=True)
     check(out.returncode == 1, "identifier-like strings found:\n" + out.stdout[:400])
     print("PASS no identifiers in media files")

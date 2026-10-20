@@ -22,7 +22,11 @@ def load(path=DEFAULT_PATH) -> dict:
     except (ValueError, OSError) as e:
         log.warning("media_local.json unreadable (%s); using empty config", type(e).__name__)
         return {k: type(v)() for k, v in EMPTY.items()}
-    return {"triggers": dict(d.get("triggers") or {}), "targets": list(d.get("targets") or [])}
+    out = {"triggers": dict(d.get("triggers") or {}), "targets": list(d.get("targets") or [])}
+    for k in ("vm_api", "kitchen_pair", "dispatch", "box3_room"):
+        if d.get(k) is not None:
+            out[k] = d[k]
+    return out
 
 
 def trigger(cfg: dict, ref: str):

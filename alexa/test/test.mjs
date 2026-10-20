@@ -654,4 +654,6 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
 assert.ok(sent.length >= qBefore);
 const { runMediaTests } = await import("./media.mjs");
 await runMediaTests(ok);
+const { runM3Tests } = await import("./m3.mjs");
+await runM3Tests(ok);
 console.log(`ALL ${n} PASSED`);

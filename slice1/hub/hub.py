@@ -76,8 +76,28 @@ LISTS = ListStore(LIST_FILE)
 def load_lists():
     return LISTS.load()
 
+MEDIA = None   # media.service.MediaService (M3), set at startup
+
+async def media_route(text: str):
+    """Exact library names ("play LBC", "stop the radio") skip the LLM."""
+    if MEDIA is None:
+        return None
+    from media.service import fast_path
+    hit = fast_path(text, MEDIA.lib)
+    if not hit:
+        return None
+    if hit[0] == "stop":
+        res = await MEDIA.stop(source="box3")
+    else:
+        res = await MEDIA.play(entry_id=hit[1], room=hit[2], source="box3", mode=hit[3])
+    speech = res.get("speech") or "OK."
+    return {"category": "media", "speech": speech, "card": {"type": "text", "title": "Media", "body": speech}}
+
 async def route(text: str, *, source: str = "box3-kitchen", session: str | None = None, on_sentence=None):
     """Regex fast path, then the brain. List and record hits never call xAI."""
+    media = await media_route(text)
+    if media is not None:
+        return media
     res = route_text(text, LISTS, REC.active)
     if res["category"] != "fallback":
         return res
@@ -391,6 +411,24 @@ async def main():
     try:   # media library (M1): create/seed data/media.sqlite so the first list_library is instant
         from brain.tools import media_library
         log.info("media library ready entries=%d", len(media_library().entries()))
+        global MEDIA
+        from media import local as media_local
+        from media.native import VoiceMonkey
+        from media.resolver import Resolver
+        from media.service import MediaService
+        import brain.tools as brain_tools
+        _mcfg = media_local.load()
+        _devs = None
+        try:
+            from alexa_pull import Devices as _Devices
+            _devs = _Devices()
+        except Exception:
+            pass
+        MEDIA = MediaService(media_library(), _mcfg, disp=disp, native=VoiceMonkey(_mcfg, media_library()),
+                             devices=_devs, resolver=Resolver(media_library()))
+        brain_tools.MEDIA = MEDIA
+        log.info("media routing ready triggers=%d kitchen_pair=%d dispatch=%d",
+                 len(_mcfg.get("triggers") or {}), len(_mcfg.get("kitchen_pair") or []), len(_mcfg.get("dispatch") or {}))
     except Exception as e:
         log.warning("media library unavailable (%s)", type(e).__name__)
     alexa_devices = alexa_seen = alexa_recent = None
@@ -417,6 +455,9 @@ async def main():
                 return await BRAIN.handle(text, source=source, session=session)
             link = AlexaLink(disp, _alexa_route, _alexa_brain, push_card,
                              devices=alexa_devices, seen=alexa_seen, recent=alexa_recent)
+            if MEDIA is not None:
+                link.media = MEDIA; MEDIA.link = link; MEDIA.devices = alexa_devices
+                app["media_refresh"] = asyncio.create_task(supervise("media-refresh", MEDIA.refresh_loop))
             async def _link_alert(name, exc):
                 await disp.emit("error", {"message": "Alexa live link stopped", "code": "alexa-link",
                                            "detail": type(exc).__name__})

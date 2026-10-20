@@ -117,6 +117,42 @@ async def list_library(args, ctx: ToolContext) -> dict:
             "say": "Speak the summary in one sentence."}
 
 
+MEDIA = None   # media.service.MediaService, set by the hub at startup (M3)
+
+
+def _media_source(ctx):
+    src = str(ctx.source or "")
+    if src.startswith("alexa:"):
+        return "alexa", src.split(":", 1)[1]
+    return "box3", None
+
+
+async def play_media(args, ctx: ToolContext) -> dict:
+    if MEDIA is None:
+        return {"ok": False, "error": NOT_AVAILABLE}
+    name = str((args or {}).get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "missing name"}
+    if re.match(r"^https?://", name, re.I):
+        return {"ok": False, "error": REFUSED, "reason": "only library entries can be played"}
+    episode = str((args or {}).get("episode") or "").lower()
+    mode = {"latest": "latest", "resume": "resume"}.get(episode, "auto")
+    source, echo = _media_source(ctx)
+    res = await MEDIA.play(name=name, room=(args or {}).get("room"), source=source, echo=echo, mode=mode)
+    if res.get("route") == "frida" and source == "alexa":
+        entry = MEDIA.lib.get(res["entry_id"])
+        res = {**res, "speech": f"Say, play {entry['name'] if entry else name}."}
+    return {"ok": bool(res.get("ok")), "route": res.get("route"), "say": res.get("speech")}
+
+
+async def stop_media(args, ctx: ToolContext) -> dict:
+    if MEDIA is None:
+        return {"ok": False, "error": NOT_AVAILABLE}
+    source, echo = _media_source(ctx)
+    res = await MEDIA.stop(room=(args or {}).get("room"), source=source, echo=echo)
+    return {"ok": bool(res.get("ok")), "say": res.get("speech")}
+
+
 class Tool:
     def __init__(self, name, description, parameters, handler, scope):
         self.name = name
@@ -194,6 +230,23 @@ TOOLS = [
                      "description": "Optional: only this kind."},
         }, "required": []},
         list_library, "read",
+    ),
+    Tool(
+        "play_media",
+        "Play a radio station, podcast or music preset from the media library. Only library names; "
+        "never a URL. Say the returned 'say' line.",
+        {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Library name as spoken, e.g. LBC or the DSR Daily."},
+            "room": {"type": "string", "description": "Optional room, e.g. kitchen."},
+            "episode": {"type": "string", "enum": ["latest", "resume"], "description": "Optional."},
+        }, "required": ["name"]},
+        play_media, "house",
+    ),
+    Tool(
+        "stop_media",
+        "Stop or pause what Womble started playing. Say the returned 'say' line.",
+        {"type": "object", "properties": {"room": {"type": "string"}}, "required": []},
+        stop_media, "house",
     ),
 ]
 

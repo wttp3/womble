@@ -171,6 +171,28 @@ class Library:
             return None   # a tie: let the brain choose between them
         return cands[0]
 
+    # ---------- writes ----------
+    def log_play(self, entry_id, room, target, method, status, detail=None) -> int:
+        with self._lock, self.db:
+            cur = self.db.execute(
+                "INSERT INTO plays(entry_id,room,target,method,started_at,status,detail) VALUES(?,?,?,?,?,?,?)",
+                (entry_id, room, target, method, _now(), status, (detail or "")[:200]))
+            return cur.lastrowid
+
+    def mirror_resume(self, ep_key, entry_id, offset_ms):
+        with self._lock, self.db:
+            if offset_ms:
+                self.db.execute("INSERT INTO resume_mirror(ep_key,entry_id,offset_ms,updated_at) VALUES(?,?,?,?)"
+                                " ON CONFLICT(ep_key) DO UPDATE SET offset_ms=excluded.offset_ms, updated_at=excluded.updated_at",
+                                (ep_key, entry_id, int(offset_ms), _now()))
+            else:
+                self.db.execute("DELETE FROM resume_mirror WHERE ep_key=?", (ep_key,))
+
+    def snapshot(self) -> list:
+        """Enabled entries with their methods, for the worker (DO) snapshot."""
+        return [{"id": e["id"], "name": e["name"], "aliases": e["aliases"], "type": e["type"],
+                 "methods": e["methods"]} for e in self.entries()]
+
     # ---------- summary ----------
     def summary(self, type=None) -> str:
         es = self.entries(type)

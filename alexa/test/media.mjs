@@ -201,7 +201,7 @@ export async function runMediaTests(ok) {
   assert.equal(bad.status, 400);
   assert.ok(![...mem.keys()].some((k) => k.includes("amzn1")), "raw device id in a key");
   assert.ok(!JSON.stringify([...mem.values()]).includes("amzn1"), "raw device id in a value");
-  assert.ok(hubCalls.every((p) => p === "/media" || p === "/reqlog"));
+  assert.ok(hubCalls.every((p) => ["/media", "/reqlog", "/dispatch", "/notify"].includes(p)), hubCalls.join());
   ok("media: DO accepts only media: keys; device ids are hashed");
 
   // --- hub offline: still plays (no DO) ---
