@@ -140,6 +140,7 @@ async function playEntry(entry, ctx, { mode = "auto", index = 0, quiet = false }
   let eps;
   try { eps = await podcastEpisodes(entry, deps); } catch (e) {
     console.log(`media feed failed entry=${entry.id} err=${String(e?.message || e).slice(0, 40)}`);
+    if (deps.trace) { deps.trace.error = `feed: ${String(e?.message || e).slice(0, 60)}`; deps.trace.entry = entry.id; }
     return sayRes(`I couldn't get ${entry.name} right now.`);
   }
   const ep = eps[Math.max(0, index)];

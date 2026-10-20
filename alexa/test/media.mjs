@@ -6,6 +6,7 @@ import { HubLink } from "../src/hub_link.js";
 import { LIBRARY } from "../src/media/library.js";
 import { episodes, readItems, parseDuration } from "../src/media/rss.js";
 import { makeToken, parseToken, mediaIntentFromText } from "../src/media/player.js";
+import { REQLOG_MAX, routeRequests } from "../src/reqlog.js";
 
 export async function runMediaTests(ok) {
   const SKILL = "amzn1.ask.skill.test-0000";
@@ -15,8 +16,8 @@ export async function runMediaTests(ok) {
   // Real HubLink DO with in-memory storage.
   const mem = new Map();
   const storage = {
-    async get(keys) { return new Map(keys.map((k) => [k, mem.get(k)])); },
-    async put(obj) { for (const [k, v] of Object.entries(obj)) mem.set(k, structuredClone(v)); },
+    async get(keys) { return Array.isArray(keys) ? new Map(keys.map((k) => [k, structuredClone(mem.get(k))])) : structuredClone(mem.get(keys)); },
+    async put(obj, val) { if (typeof obj === "string") { mem.set(obj, structuredClone(val)); return; } for (const [k, v] of Object.entries(obj)) mem.set(k, structuredClone(v)); },
     async delete(keys) { for (const k of keys) mem.delete(k); },
   };
   const link = new HubLink({ storage, getWebSockets: () => [] }, {});
@@ -200,7 +201,7 @@ export async function runMediaTests(ok) {
   assert.equal(bad.status, 400);
   assert.ok(![...mem.keys()].some((k) => k.includes("amzn1")), "raw device id in a key");
   assert.ok(!JSON.stringify([...mem.values()]).includes("amzn1"), "raw device id in a value");
-  assert.ok(hubCalls.every((p) => p === "/media"));
+  assert.ok(hubCalls.every((p) => p === "/media" || p === "/reqlog"));
   ok("media: DO accepts only media: keys; device ids are hashed");
 
   // --- hub offline: still plays (no DO) ---
@@ -211,4 +212,49 @@ export async function runMediaTests(ok) {
     env, pass, { fetch: async () => new Response("nope", { status: 503 }) })).json();
   assert.equal(said(fail), "I couldn't get DSR Daily right now.");
   ok("media: plays without DO storage; a failing feed gets a short apology");
+
+  // --- request log ring (read through the bearer route) ---
+  storage.list = async ({ prefix }) => new Map([...mem].filter(([k]) => k.startsWith(prefix)));
+  const TOKEN = "test-hub-token-0123456789";
+  const renv = { HUB_LINK_TOKEN: TOKEN, HUB_LINK: hub };
+  const get = (auth, method = "GET") => routeRequests(new Request("https://x/admin/requests", { method, headers: auth ? { Authorization: auth } : {} }), renv);
+  assert.equal((await get(null)).status, 401);
+  assert.equal((await get("Bearer wrong")).status, 401);
+  assert.equal((await get(`Bearer ${TOKEN}`, "POST")).status, 404);
+  assert.equal((await routeRequests(new Request("https://x/admin/requests", { headers: { Authorization: "Bearer " } }), { HUB_LINK: hub })).status, 404);
+  for (let i = 0; i < 20; i++) await call(intent("ListLibraryIntent"));
+  await (await handle(new Request("https://x/", { method: "POST", body: JSON.stringify(intent("PlayMediaIntent", { media: { value: "DSR Daily" } })) }),
+    env, pass, { hub, fetch: async () => new Response("nope", { status: 503 }) })).json();
+  const logRes = await get(`Bearer ${TOKEN}`);
+  assert.equal(logRes.status, 200);
+  const log = await logRes.json();
+  assert.equal(log.requests.length, REQLOG_MAX);
+  const raw = JSON.stringify(log);
+  assert.ok(!/amzn1\.|https?:\/\/|w1\|/.test(raw), "identifier, URL or token in the log");
+  assert.ok(log.requests.every((e) => /^[0-9a-f]{16}$/.test(e.device) && /Z$/.test(e.at)));
+  const last = log.requests.at(-1);
+  assert.equal(last.intent, "PlayMediaIntent"); assert.equal(last.error, "feed: feed 503"); assert.equal(last.entry, "dsr_daily");
+  assert.equal(last.slots.media, "DSR Daily"); assert.equal(last.reply, "speech");
+  const all = log.requests;
+  const plays = all.filter((e) => e.reply === "AudioPlayer.Play");
+  assert.ok(plays.some((e) => e.stream_host === "media-ssl.musicradio.com" && e.entry === "lbc"));
+  assert.ok(plays.some((e) => e.stream_host && e.stream_host.endsWith(".akamaized.net") && e.entry === "bbc_ws"));
+  assert.ok(log.requests.some((e) => e.intent === "CaptureIntent" && e.text === "play world service"));
+  assert.ok(log.requests.filter((e) => e.intent === "ListLibraryIntent").length >= 20);
+  assert.ok(log.media.episodes >= 2 && log.media.last.length >= 1 && log.media.last.every((l) => /^[0-9a-f]{16}$/.test(l.device)));
+  ok("request log: last 50 kept, bearer-only read, no ids/tokens/URLs, media summary");
+
+  // Forwarded questions are logged as hub replies.
+  const qhub = { getByName: () => ({ fetch: async (u, init) => {
+    const r = new Request(u, init); const p = new URL(r.url).pathname;
+    if (p === "/reqlog") { qlog.push(await r.json()); return Response.json({ ok: true }); }
+    return Response.json({ speech: "Salt.", end_session: true });
+  } }) };
+  const qlog = [];
+  await handle(new Request("https://x/", { method: "POST", body: JSON.stringify(intent("AskHowIntent", { query: { value: "to season soup" } })) }), env, pass, { hub: qhub });
+  assert.equal(qlog.length, 1); assert.equal(qlog[0].reply, "hub:hub"); assert.equal(qlog[0].text, "how to season soup");
+  assert.equal(qlog[0].speech, "Salt.");
+  const bad1 = await handle(new Request("https://x/", { method: "POST", body: "{}" }), env, async () => { throw new Error("sig"); }, { hub: qhub });
+  assert.equal(bad1.status, 400); assert.equal(qlog.length, 1);
+  ok("request log: forwarded question logged as hub reply; unverified requests are not logged");
 }

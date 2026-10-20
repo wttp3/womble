@@ -187,12 +187,14 @@ ok("DO matches the answer to the job id");
 
 function fakeHub({ delayMs = 0, connected = true, answer }) {
   const seen = [];
+  const logged = [];
   const ns = {
     getByName() {
       return {
         async fetch(input, init) {
           const req = input instanceof Request ? input : new Request(input, init);
           const body = await req.json();
+          if (new URL(req.url).pathname === "/reqlog") { logged.push(body); return Response.json({ ok: true }); }
           seen.push(body);
           if (!connected) return Response.json({ offline: true });
           if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
@@ -201,7 +203,7 @@ function fakeHub({ delayMs = 0, connected = true, answer }) {
       };
     },
   };
-  return { ns, seen };
+  return { ns, seen, logged };
 }
 const alexaBody = (request, extra = {}) => body({
   type: "IntentRequest",

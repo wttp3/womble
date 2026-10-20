@@ -149,7 +149,23 @@ export class HubLink {
     // Internal only: the worker calls this. The public route never forwards POST.
     if (request.method === "POST" && url.pathname === "/dispatch") return this._dispatch(request);
     if (request.method === "POST" && url.pathname === "/media") return this._media(request);
+    if (request.method === "POST" && url.pathname === "/reqlog") return this._reqlogAdd(request);
+    if (request.method === "GET" && url.pathname === "/reqlog") return this._reqlogRead();
     return new Response("not found", { status: 404 });
+  }
+
+  async _reqlogAdd(request) {
+    let entry;
+    try { entry = await request.json(); } catch { return new Response("bad", { status: 400 }); }
+    if (!entry || typeof entry !== "object" || JSON.stringify(entry).length > 4096) return new Response("bad", { status: 400 });
+    const { appendReqlog } = await import("./reqlog.js");
+    return Response.json({ ok: true, count: await appendReqlog(this.ctx.storage, entry) });
+  }
+
+  async _reqlogRead() {
+    const { mediaSummary } = await import("./reqlog.js");
+    const requests = (await this.ctx.storage.get("reqlog")) || [];
+    return Response.json({ requests, media: await mediaSummary(this.ctx.storage) });
   }
 
   // Media state (M2): resume offsets, last play per device, episode URLs.
