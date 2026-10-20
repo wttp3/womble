@@ -6,6 +6,7 @@ Env: DISPLAY_NAME ("Womble #1"), WEATHER_LAT/WEATHER_LON (Madrid default),
      DISPLAY_PRINTER (0/1, feature flag), DISPLAY_TOKEN (optional bearer for POST /api/event;
      without it /api/event only accepts requests from 127.0.0.1)."""
 import asyncio, json, logging, os, time, uuid
+from collections import OrderedDict, deque
 from pathlib import Path
 from aiohttp import web, ClientSession, ClientTimeout
 
@@ -24,6 +25,14 @@ def asset_response(name: str) -> web.FileResponse:
         "Content-Type": ASSETS[name],
         "Cache-Control": "public, max-age=86400",
     })
+
+
+def page_ver() -> str:
+    """Changes whenever display.html changes, so a connected page reloads itself after a deploy."""
+    try:
+        st = (STATIC / "display.html").stat(); return "%x-%x" % (int(st.st_mtime), st.st_size)
+    except OSError:
+        return ""
 
 
 def http_hosts(hub_ip: str) -> list[str]:
@@ -71,6 +80,88 @@ async def supervise(name, coro_factory, on_give_up=None, fails_before_alert=3, f
             log.warning("%s stopped", name)
             return
 WEATHER_TTL = 15 * 60
+PING_EVERY_S = 60
+STATS_WINDOW = 200
+STATS_LOG_EVERY = 25
+
+
+def pct(xs, p):
+    if not xs: return None
+    s = sorted(xs); k = min(len(s) - 1, max(0, round(p / 100 * (len(s) - 1))))
+    return s[k]
+
+
+class PaintStats:
+    """Frame timing (frame/f1). The page acks each message after a double rAF.
+
+    push_to_paint: hub send -> frame painted, using an NTP-style clock offset
+                   per socket (clock.ping/pong), so the two clocks need not agree.
+    render:        frame receive -> painted (frame clock only).
+    rtt:           hub send -> ack back (hub clock only; no offset needed).
+    tap_fb:        pointerdown -> pressed state painted (frame clock only).
+    """
+    KEYS = ("push_to_paint", "render", "rtt", "tap_fb")
+
+    def __init__(self, window=STATS_WINDOW):
+        self.window = window
+        self.sent = OrderedDict()           # id -> (event, t_send_ms)
+        self.offset = {}                    # ws -> (offset_ms, net_rtt_ms) client minus hub
+        self.reset()
+
+    def reset(self):
+        self.d = {k: deque(maxlen=self.window) for k in self.KEYS}
+        self.by_event = {}
+        self.acks = 0
+
+    def on_send(self, msg_id, event, t_ms):
+        self.sent[msg_id] = (event, t_ms)
+        while len(self.sent) > 500: self.sent.popitem(last=False)
+
+    def on_pong(self, ws, t0, t1, t2):
+        """t0 hub send, t1 frame clock, t2 hub receive (all ms)."""
+        rtt = t2 - t0
+        if rtt < 0 or rtt > 10000: return None
+        prev = self.offset.get(ws)
+        if prev is None or rtt <= prev[1] * 1.5:   # keep the cleanest sample
+            self.offset[ws] = (t1 - (t0 + t2) / 2, rtt)
+        return self.offset[ws]
+
+    def on_ack(self, ws, j, now_ms):
+        sent = self.sent.pop(str(j.get("id", "")), None)
+        if not sent: return None
+        ev, t_send = sent
+        out = {"event": ev, "rtt": now_ms - t_send}
+        try:
+            t_recv, t_paint = float(j["t_recv"]), float(j["t_paint"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        out["render"] = t_paint - t_recv
+        off = self.offset.get(ws)
+        out["push_to_paint"] = (t_paint - off[0]) - t_send if off else out["rtt"]   # no offset yet: upper bound
+        if off: out["net"] = (t_recv - off[0]) - t_send
+        out["hidden"] = bool(j.get("hidden"))
+        for k in ("push_to_paint", "render", "rtt"):
+            self.d[k].append(out[k])
+        self.by_event.setdefault(ev, deque(maxlen=self.window)).append(out["push_to_paint"])
+        self.acks += 1
+        return out
+
+    def on_tap_fb(self, ms):
+        try: ms = float(ms)
+        except (TypeError, ValueError): return
+        if 0 <= ms < 10000: self.d["tap_fb"].append(ms)
+
+    def summary(self):
+        def s(xs):
+            xs = list(xs)
+            return {"n": len(xs), "p50": pct(xs, 50), "p95": pct(xs, 95), "max": max(xs) if xs else None}
+        return {**{k: s(v) for k, v in self.d.items()}, "by_event": {k: s(v) for k, v in self.by_event.items()}}
+
+    def line(self):
+        sm = self.summary()
+        f = lambda k: "%s n=%d p50=%s p95=%s max=%s" % (k, sm[k]["n"], *(("-" if sm[k][x] is None else "%.0f" % sm[k][x]) for x in ("p50", "p95", "max")))
+        return " | ".join(f(k) for k in self.KEYS)
+
 SHORT_WORDS = 60
 FOREGROUND = {"reply", "list.updated", "research.added", "recipe", "recipe.step", "error"}
 
@@ -96,6 +187,7 @@ class Display:
         self.snapshot_extra: dict = {}     # key -> fn() merged into snapshot data
         self.allowed_origins = None        # None = no Origin check (standalone). set of strings otherwise
         self.boot_note = None              # toast sent to each socket that connects while set
+        self.paint = PaintStats()
 
     # ---------- outbound ----------
     async def emit(self, event: str, data: dict | None = None, corr=None, ttl_s=None, priority="normal"):
@@ -109,6 +201,7 @@ class Display:
         if event == "idle": self.recipe = None; self.step = None   # dismiss / "stop cooking" ends the recipe
         msg = {"v": 1, "event": event, "id": uuid.uuid4().hex, "corr": corr, "ts": time.time(),
                "ttl_s": ttl_s, "priority": priority, "data": data}
+        self.paint.on_send(msg["id"], event, msg["ts"] * 1000)
         await self._send_all(msg)
 
     async def push_card(self, card: dict):
@@ -133,6 +226,7 @@ class Display:
                     "device_name": self.name, "features": {"printer": self.printer},
                     "lists": {k: [i["item"] if isinstance(i, dict) else i for i in v] for k, v in lists.items()},
                     "weather": await self.get_weather(), "media": self.media, "recipe": self.recipe, "step": self.step,
+                    "page_ver": page_ver(),
                     **{k: f() for k, f in self.snapshot_extra.items()}}}
 
     # ---------- weather (Open-Meteo, no key, cached 15 min) ----------
@@ -187,7 +281,10 @@ class Display:
             log.info("ws rejected origin %r", origin)
             raise web.HTTPForbidden()
         ws = web.WebSocketResponse(heartbeat=20); await ws.prepare(request); self.clients.add(ws)
-        await ws.send_str(json.dumps(await self.snapshot()))
+        snap = await self.snapshot()
+        self.paint.on_send(snap["id"], "snapshot", snap["ts"] * 1000)
+        await ws.send_str(json.dumps(snap))
+        pinger = asyncio.create_task(self._ping_loop(ws))
         if self.boot_note:
             note = {"v": 1, "event": "toast", "id": uuid.uuid4().hex, "corr": None, "ts": time.time(),
                     "ttl_s": None, "priority": "normal", "data": {"text": self.boot_note, "kind": "info"}}
@@ -195,10 +292,45 @@ class Display:
         async for m in ws:
             try:
                 j = json.loads(m.data)
-                if j.get("event") == "tap": await self.on_tap(str(j.get("action", "")))
+                ev = j.get("event")
+                if ev == "tap":
+                    if j.get("fb_ms") is not None: self.paint.on_tap_fb(j.get("fb_ms"))
+                    await self.on_tap(str(j.get("action", "")))
+                elif ev == "paint_ack": self._on_ack(ws, j)
+                elif ev == "clock.pong":
+                    self.paint.on_pong(ws, float(j.get("t0", 0)), float(j.get("t1", 0)), time.time() * 1000)
             except Exception as e:
                 log.warning("bad client msg: %s", e)
+        pinger.cancel(); self.paint.offset.pop(ws, None)
         self.clients.discard(ws); return ws
+
+    async def _ping_loop(self, ws):
+        """NTP-style clock samples so push_to_paint can use the frame's paint time."""
+        try:
+            for i in range(10**9):
+                await ws.send_str(json.dumps({"v": 1, "event": "clock.ping", "data": {"t0": time.time() * 1000}}))
+                await asyncio.sleep(2 if i < 3 else PING_EVERY_S)
+        except (asyncio.CancelledError, ConnectionResetError, RuntimeError):
+            pass
+
+    def _on_ack(self, ws, j):
+        out = self.paint.on_ack(ws, j, time.time() * 1000)
+        if not out: return
+        log.info("paint ev=%s push_to_paint_ms=%.0f render_ms=%.0f rtt_ms=%.0f net_ms=%s%s", out["event"],
+                 out["push_to_paint"], out["render"], out["rtt"],
+                 "%.0f" % out["net"] if "net" in out else "-", " hidden" if out["hidden"] else "")
+        if self.paint.acks % STATS_LOG_EVERY == 0:
+            log.info("paint stats %s", self.paint.line())
+
+    async def api_paint(self, request):
+        """GET /api/paint -> rolling stats (localhost or bearer). ?reset=1 clears them."""
+        if self.token:
+            if request.headers.get("Authorization") != f"Bearer {self.token}": raise web.HTTPUnauthorized()
+        elif request.remote not in ("127.0.0.1", "::1"): raise web.HTTPForbidden()
+        sm = self.paint.summary(); sm["line"] = self.paint.line()
+        if request.query.get("reset") == "1": self.paint.reset()
+        log.info("paint stats %s", sm["line"])
+        return web.json_response(sm)
 
     async def api_event(self, request):
         """Local injection (tests, bot callbacks via router later). Body: {"event":..., "data":{...}} or legacy card."""
@@ -222,6 +354,7 @@ class Display:
         app.router.add_get("/ws", self.ws_handler)
         app.router.add_post("/api/event", self.api_event)
         app.router.add_get("/api/taps", self.api_taps)
+        app.router.add_get("/api/paint", self.api_paint)
         async def start_bg(app):
             async def _alert(name, exc):
                 await self.emit("error", {"message": "Weather updates stopped", "code": "weather",
