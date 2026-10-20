@@ -145,6 +145,17 @@ async def play_media(args, ctx: ToolContext) -> dict:
     return {"ok": bool(res.get("ok")), "route": res.get("route"), "say": res.get("speech")}
 
 
+async def add_to_library(args, ctx: ToolContext) -> dict:
+    if MEDIA is None:
+        return {"ok": False, "error": NOT_AVAILABLE}
+    q = str((args or {}).get("query") or "").strip()
+    if not q or re.search(r"https?://", q, re.I):
+        return {"ok": False, "say": "Tell me the name of the show or station."}
+    t = (args or {}).get("type")
+    res = await MEDIA.add_search(q, t if t in ("podcast", "radio") else None)
+    return {"ok": bool(res.get("ok")), "say": res.get("speech")}
+
+
 async def stop_media(args, ctx: ToolContext) -> dict:
     if MEDIA is None:
         return {"ok": False, "error": NOT_AVAILABLE}
@@ -247,6 +258,17 @@ TOOLS = [
         "Stop or pause what Womble started playing. Say the returned 'say' line.",
         {"type": "object", "properties": {"room": {"type": "string"}}, "required": []},
         stop_media, "house",
+    ),
+    Tool(
+        "add_to_library",
+        "Search the podcast or radio directories for a show to add to the media library. It only "
+        "proposes up to 3 tested candidates on the frame; nothing is added until the user says "
+        "'yes, the first one' or taps Add. Say the returned 'say' line.",
+        {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Show or station name as spoken."},
+            "type": {"type": "string", "enum": ["podcast", "radio"], "description": "Optional."},
+        }, "required": ["query"]},
+        add_to_library, "house",
     ),
 ]
 

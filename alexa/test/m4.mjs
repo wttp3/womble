@@ -62,6 +62,11 @@ export async function runM4Tests(ok) {
   assert.equal(dir(r).type, "AudioPlayer.Play"); assert.ok(dir(r).audioItem.stream.offsetInMilliseconds >= 39000);
   ok("M4/M5: pending pause -> AudioPlayer.Stop (estimate saved), pending resume -> Play from there");
 
+  await pend({ op: "next" }, 120);
+  r = await call(body({ type: "LaunchRequest" }));
+  assert.equal(dir(r).audioItem.stream.url, "https://cdn.example/ep2.mp3");
+  ok("M5: pending next -> older episode, quietly");
+
   // expired / bad
   await pend({ op: "play", entry_id: "dsr_daily" }, 5);
   clock += 6000;

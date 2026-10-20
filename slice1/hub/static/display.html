@@ -97,8 +97,8 @@ function hhmm(d){return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).sl
 // ---------- model ----------
 var M={name:'Womble #1',features:{},lists:{},weather:null,media:null,recipe:null,step:null,stepData:null};
 var cur={s:'idle',d:{}},timer=null,toastT=null,ws=null,online=false,wakeT=null,timerEnd=0;
-var RANK={recmenu:1,record:8,idle:0,playing:1,research:2,list:2,reply:2,recipe:3,step:4,error:5,thinking:6,listening:7};
-var DUR={recmenu:60,list:12,research:8,recipe:600,error:10,playing:20,thinking:45,listening:12};
+var RANK={library:2,cands:3,recmenu:1,record:8,idle:0,playing:1,research:2,list:2,reply:2,recipe:3,step:4,error:5,thinking:6,listening:7};
+var DUR={library:60,cands:300,recmenu:60,list:12,research:8,recipe:600,error:10,playing:20,thinking:45,listening:12};
 
 function base(){return M.stepData?['step',M.stepData]:['idle',{}]}
 function show(s,d,ttl){
@@ -131,6 +131,7 @@ function render(){
    (w?'<div class="wx"><span class="accent">'+ic(wxIcon(w.code))+'</span> '+w.temp+'° <span class="muted">· max '+w.max+'° · min '+w.min+'°</span></div>':'<div class="wx muted">Weather unavailable</div>')+'</div>'+
    '<div class="foot">'+esc(M.name.toUpperCase())+' · SAY “WOMBLE”</div>'+
    '<button class="recb" data-a="record.menu" style="left:48px;right:auto;top:600px">● Record Womble</button>'+
+   '<button class="recb" data-a="media.library" style="left:48px;right:auto;top:690px">♪ Library</button>'+
    '<div class="panel"><div class="h"><span>Shopping</span><span class="muted">'+sh.length+'</span></div><ul>'+
    (sh.length?sh.slice(0,9).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+(sh.length>9?'<li class="muted" style="list-style:none">+'+(sh.length-9)+' more</li>':''):'<li class="muted">Nothing yet. Say “add eggs to shopping”</li>')+'</ul></div>';}
  else if(s==='recmenu')h='<div class="center"><div class="label">Wake-word training · round 2</div><h1>Record Womble</h1><div class="big muted">Who is recording? About 50 “Womble”s and 15 other words, a few minutes.</div>'+
@@ -164,7 +165,19 @@ function render(){
  else if(s==='playing'){var m=M.media||d,p=m.duration_s?Math.min(100,100*mediaPos()/m.duration_s):0;
   h=(m.art_url?'<img class="art" src="'+esc(m.art_url)+'">':'<div class="art"></div>')+'<div class="ni"><div class="label">Now playing · '+esc(m.player||'')+'</div><h1>'+esc(m.title)+'</h1><div class="big muted">'+esc([m.artist,m.album].filter(Boolean).join(' · '))+'</div>'+
    '<div class="pb"><i style="width:'+p.toFixed(1)+'%"></i></div><div class="muted" style="font-size:28px;margin-top:10px;display:flex;justify-content:space-between"><span>'+mmss(mediaPos())+'</span><span>'+mmss(m.duration_s||0)+'</span></div></div>'+
-   '<button class="btn" data-a="media.prev" style="left:500px;top:420px">'+ic('prev')+'</button><button class="btn pri" data-a="media.toggle" style="left:648px;top:420px">'+ic(m.state==='playing'?'pause':'play')+'</button><button class="btn" data-a="media.next" style="left:796px;top:420px">'+ic('next')+'</button>';}
+   '<button class="btn" data-a="media.prev" style="left:500px;top:420px">'+ic('prev')+'</button><button class="btn pri" data-a="media.toggle" style="left:648px;top:420px">'+ic(m.state==='playing'?'pause':'play')+'</button><button class="btn" data-a="media.next" style="left:796px;top:420px">'+ic('next')+'</button>'+
+   (m.route==='native'?'':'<button class="btn" data-a="media.back" style="left:500px;top:560px;font-size:30px">−30</button><button class="btn" data-a="media.fwd" style="left:796px;top:560px;font-size:30px">+30</button>')+
+   '<button class="btn" data-a="media.library" style="left:648px;top:560px;font-size:30px">♪</button>';}
+ else if(s==='library'){var g=d.grid||{},T=[['radio','Radio'],['podcast','Podcasts'],['music_preset','Music presets']];
+  h='<div class="label">Media library · tap ▶ to play in the kitchen</div><div style="columns:2;column-gap:48px;margin-top:16px">'+T.map(function(t){var es=g[t[0]]||[];if(!es.length)return '';
+   return '<div style="break-inside:avoid;margin-bottom:20px"><div class="muted" style="font-size:26px">'+t[1]+'</div>'+es.map(function(e){
+    return '<div style="display:flex;align-items:center;gap:16px;font-size:32px;margin:8px 0"><button class="btn" data-a="media.play:'+esc(e.id)+'" style="position:static;width:64px;height:64px;font-size:26px">▶</button><span style="flex:1">'+esc(e.name)+(e.legal_note?' <span class="muted">⚠</span>':'')+'</span><button class="btn" data-a="media.remove:'+esc(e.id)+'" style="position:static;width:56px;height:56px;font-size:22px">✕</button></div>'}).join('')+'</div>'}).join('')+'</div>'+
+   '<div class="chips" style="position:absolute;bottom:32px">Say “add the podcast …” or “add the radio station …”</div>';}
+ else if(s==='cands'){var cs=d.candidates||[];
+  h='<div class="label">Add to library · “'+esc(d.query)+'”</div>'+cs.map(function(c){
+   return '<div style="display:flex;align-items:center;gap:24px;margin:22px 0;'+(c.ok?'':'opacity:.45')+'"><div style="font-size:40px;width:48px" class="muted">'+c.n+'</div><div style="flex:1"><div style="font-size:38px">'+esc(c.name)+'</div><div class="muted" style="font-size:24px">'+esc([c.source,c.detail,c.latest].filter(Boolean).join(' · '))+(c.ok?' · <span class="ok">✓ plays</span>':' · '+esc(c.why||'won’t play'))+'</div></div>'+
+   (c.ok?'<button class="btn pri" data-a="media.add:'+c.n+'" style="position:static;width:auto;padding:0 28px;font-size:30px">Add</button>':'')+'</div>'}).join('')+
+   '<div class="chips" style="position:absolute;bottom:32px">Or say “yes, the first one”</div>';}
  else if(s==='error')h='<div class="center"><div class="ring" style="border-color:#ff6b5b"></div><h1 class="err">'+esc(d.message)+'</h1>'+(d.detail?'<div class="big muted">'+esc(d.detail)+'</div>':'')+
    '<div class="chips">'+(d.retry_in_s?'Retrying in '+d.retry_in_s+' s · ':'')+'code '+esc(d.code||'?')+'</div></div>';
  $('main').innerHTML=h;renderNP();
@@ -196,6 +209,8 @@ function handle(m){
  case 'research.added':d._toast='Added “'+d.title+'” to research pile';offer('research',d,ttl);break;
  case 'recipe':M.recipe=d;M.stepData=null;timerEnd=0;offer('recipe',d,ttl);break;
  case 'recipe.step':M.stepData=d;timerEnd=d.timer_s?Date.now()+d.timer_s*1000:0;show('step',d,0);break;
+ case 'media.library':show('library',d,ttl);break;
+ case 'media.candidates':show('cands',d,ttl);break;
  case 'media.state':M.media=d;mediaAt=Date.now();if(d.focus){d._toast='Now playing: '+d.title;offer('playing',d,ttl)}else if(cur.s==='playing')render();else renderNP();break;
  case 'home.done':toast(d.text,'ok');break;
  case 'record.state':M.record=d.counts||M.record;if(d.active)show('record',d,0);break;

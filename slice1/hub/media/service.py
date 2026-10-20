@@ -18,6 +18,11 @@ import asyncio, hashlib, logging, re, time
 log = logging.getLogger("hub.media")
 KITCHEN = "kitchen"
 PENDING_TTL_S = 60
+ADD_TTL_S = 300       # one pending add per room, 5 minutes
+SEEK_STEP_MS = 30000
+DEBOUNCE_S = 1.5      # rapid +30/-30 taps collapse into one seek
+ORDINALS = {"first": 1, "1st": 1, "one": 1, "1": 1, "second": 2, "2nd": 2, "two": 2, "2": 2,
+            "third": 3, "3rd": 3, "three": 3, "3": 3}
 
 
 def device_hash(device_id: str) -> str:
@@ -35,6 +40,9 @@ class MediaService:
         self.lib, self.cfg, self.disp, self.native = lib, cfg or {}, disp, native
         self.devices, self.link, self.resolver, self.clock = devices, link, resolver, clock
         self.now = {}          # room -> media.state dict shown on the frame
+        self.directory = None  # media.directory.Directory (M5)
+        self.adds = {}         # room -> {"query", "cands", "at"}
+        self._seek = {"delta": 0, "task": None}
 
     # ---------- rooms and Echos ----------
     def _devmap(self) -> dict:
@@ -135,9 +143,7 @@ class MediaService:
         await self.emit_state(room, {"title": entry["name"], "artist": "kitchen speakers", "player": "via Alexa routine",
                                      "state": "playing", "position_s": 0, "duration_s": 0, "focus": True,
                                      "entry_id": entry["id"], "room": room, "route": "native"})
-        full, n = self.native.quota_warning()
-        if full and self.disp is not None:
-            await self.disp.emit("toast", {"text": f"Voice Monkey: {n} requests this month", "kind": "info"})
+        await self._quota_toast()
         return {"route": "native", "ok": True, "entry_id": entry["id"],
                 "speech": f"Starting {entry['name']} on the kitchen speakers."}
 
@@ -153,6 +159,7 @@ class MediaService:
         ok = await self.native.fire(d["trigger"], cmd.get("entry_id"), room, detail=cmd.get("op"))
         if not ok:
             return {"route": "none", "ok": False, "speech": f"I couldn't wake the {room} Echo."}
+        await self._quota_toast()
         if cmd.get("op") == "play":
             self.lib.log_play(cmd.get("entry_id"), room, d["echo"], "dispatch", "requested", cmd.get("mode"))
         what = label or "it"
@@ -237,4 +244,188 @@ def fast_path(text, lib):
         e = lib.exact(m["name"])
         if e:
             return ("play", e["id"], m["room"], "latest" if m.group(1) else "auto")
+    return None
+
+
+# ---------- M5: library card, add_to_library, frame transport ----------
+async def _toast(self, text):
+    if self.disp is not None and text:
+        await self.disp.emit("toast", {"text": text, "kind": "info"})
+
+
+async def _quota_toast(self):
+    full, n = self.native.quota_warning() if self.native else (False, 0)
+    if full:
+        await self._toast(f"Voice Monkey: {n} of 200 requests used this month")
+
+
+async def show_library(self):
+    if self.disp is not None:
+        await self.disp.emit("media.library", {"grid": self.lib.grid(), "ts": self.clock()})
+    return {"ok": True, "speech": self.lib.summary()}
+
+
+async def add_search(self, query, type=None, room=None):
+    room = norm_room(room) or self.box3_room()
+    query = (query or "").strip(" .!?")
+    if not query:
+        return {"ok": False, "speech": "What should I add?"}
+    if self.directory is None:
+        return {"ok": False, "speech": "I can't search the directories right now."}
+    try:
+        cands = (await self.directory.find_async(query, type))[:3]
+    except Exception as e:
+        log.warning("media add search failed (%s)", e.__class__.__name__)
+        return {"ok": False, "speech": f"I couldn't search for {query} right now."}
+    if not cands:
+        self.adds.pop(room, None)
+        return {"ok": False, "speech": f"I couldn't find {query}."}
+    self.adds[room] = {"query": query, "cands": cands, "at": self.clock()}
+    if self.disp is not None:
+        await self.disp.emit("media.candidates", {"query": query, "room": room, "candidates": [
+            {"n": i + 1, "name": c["name"], "type": c["type"], "source": c.get("source"),
+             "detail": c.get("author") or " ".join(x for x in [c.get("codec", "").upper(), f"{c['bitrate']} kbps" if c.get("bitrate") else ""] if x),
+             "latest": (c.get("latest") or {}).get("title"), "ok": bool(c.get("ok")), "why": c.get("why") or ""}
+            for i, c in enumerate(cands)]})
+    words = ["first", "second", "third"]
+    listed = "; ".join(f"{words[i]}, {c['name']}" + ("" if c.get("ok") else " (won't play)") for i, c in enumerate(cands))
+    return {"ok": True, "speech": f"I found {listed}. Say yes, the first one, or tap Add."}
+
+
+def pending_add(self, room=None):
+    room = norm_room(room) or self.box3_room()
+    p = self.adds.get(room)
+    if p and self.clock() - p["at"] > ADD_TTL_S:
+        self.adds.pop(room, None); p = None
+    return p
+
+
+async def add_confirm(self, n, room=None):
+    room = norm_room(room) or self.box3_room()
+    p = self.pending_add(room)
+    if not p:
+        return {"ok": False, "speech": "There's nothing waiting to be added."}
+    if not 1 <= int(n) <= len(p["cands"]):
+        return {"ok": False, "speech": f"There are only {len(p['cands'])} to choose from."}
+    c = p["cands"][int(n) - 1]
+    if not c.get("ok"):
+        return {"ok": False, "speech": f"{c['name']} didn't play in my test, so I didn't add it."}
+    if self.lib.exact(c["name"]):
+        self.adds.pop(room, None)
+        return {"ok": False, "speech": f"{c['name']} is already in the library."}
+    from .directory import Directory
+    e = Directory.to_entry(c, self.lib.ids())
+    self.lib.add_entry(e)
+    self.adds.pop(room, None)
+    log.info("media added entry=%s type=%s", e["id"], e["type"])
+    await self.push_snapshot()
+    await self.show_library()
+    return {"ok": True, "entry_id": e["id"], "speech": f"Added {c['name']}. Say, play {c['name']}."}
+
+
+async def remove_entry(self, entry_id):
+    e = self.lib.get(entry_id)
+    if not e or not self.lib.set_enabled(entry_id, False):
+        return {"ok": False, "speech": "That isn't in the library."}
+    log.info("media removed entry=%s", entry_id)
+    await self.push_snapshot()
+    await self.show_library()
+    return {"ok": True, "speech": f"Removed {e['name']}."}
+
+
+async def transport(self, op, room=None):
+    """Frame transport for Frida audio on the dispatcher Echo (plan section 12)."""
+    room = norm_room(room) or self.box3_room()
+    st = self.now.get(room)
+    if not st or not st.get("entry_id"):
+        return {"ok": False, "speech": "Nothing is playing."}
+    if st.get("route") == "native":
+        return {"ok": False, "speech": "Say, Alexa, stop, to the kitchen Echo."}
+    if not self.dispatcher(room):
+        return {"ok": False, "speech": f"I can't reach the {room} Echo yet."}
+    if op in ("fwd", "back"):
+        self._seek["delta"] += SEEK_STEP_MS if op == "fwd" else -SEEK_STEP_MS
+        pos = max(0.0, (st.get("position_s") or 0) + (self.clock() - (st.get("started") or self.clock()) if st.get("state") == "playing" else 0))
+        await self.emit_state(room, {**st, "position_s": max(0.0, pos + (SEEK_STEP_MS / 1000 if op == "fwd" else -SEEK_STEP_MS / 1000)),
+                                     "started": self.clock(), "focus": False})
+        if self._seek["task"] is None:
+            self._seek["task"] = asyncio.create_task(self._flush_seek(room))
+        return {"ok": True, "speech": ""}
+    if op == "toggle":
+        op = "pause" if st.get("state") == "playing" else "resume"
+    if op == "pause":
+        res = await self.dispatch(room, {"op": "pause"})
+        if res["ok"]:
+            await self.emit_state(room, {**st, "state": "paused", "focus": False})
+        return res
+    if op in ("resume", "next", "prev"):
+        return await self.dispatch(room, {"op": op, "entry_id": st.get("entry_id")})
+    return {"ok": False, "speech": "I can't do that."}
+
+
+async def _flush_seek(self, room):
+    try:
+        await asyncio.sleep(DEBOUNCE_S)
+        delta, self._seek["delta"] = self._seek["delta"], 0
+        if delta:
+            res = await self.dispatch(room, {"op": "seek", "delta_ms": delta})
+            if not res["ok"]:
+                await self._toast(res["speech"])
+    finally:
+        self._seek["task"] = None
+
+
+async def on_tap(self, action):
+    """Frame taps (display.media_handler). Returns a toast line or ''."""
+    a = str(action or "")
+    if a == "media.library":
+        res = await self.show_library(); return ""
+    if a.startswith("media.play:"):
+        res = await self.play(entry_id=a.split(":", 1)[1][:64], source="frame")
+    elif a.startswith("media.add:"):
+        n = a.split(":", 1)[1]
+        res = await self.add_confirm(int(n)) if n.isdigit() else {"speech": ""}
+    elif a.startswith("media.remove:"):
+        res = await self.remove_entry(a.split(":", 1)[1][:64])
+    elif a in ("media.fwd", "media.back", "media.toggle", "media.pause", "media.resume", "media.next", "media.prev"):
+        res = await self.transport(a.split(".", 1)[1])
+    else:
+        return None
+    return res.get("speech") or ""
+
+
+for _f in (_toast, _quota_toast, show_library, add_search, pending_add, add_confirm, remove_entry,
+           transport, _flush_seek, on_tap):
+    setattr(MediaService, _f.__name__, _f)
+
+
+# ---------- M5 fast paths ----------
+ADD_RE = re.compile(r"^(?:please\s+)?add\s+(?:the\s+|a\s+)?(?P<kind>podcast|radio station|station|radio)\s+(?:called\s+)?(?P<q>.+?)"
+                    r"(?:\s+to\s+(?:my|the)\s+(?:media\s+)?library)?[.!?]?$", re.I)
+ADD_LIB_RE = re.compile(r"^(?:please\s+)?add\s+(?P<q>.+?)\s+to\s+(?:my|the)\s+(?:media\s+)?library[.!?]?$", re.I)
+YES_RE = re.compile(r"^(?:(?:yes|yeah|yep|ok|okay)[,.]?\s*)?(?:add\s+)?(?:the\s+)?(?:number\s+)?"
+                    r"(?P<n>first|second|third|1st|2nd|3rd|one|two|three|[123])(?:\s+one)?[.!?]?$", re.I)
+SHOW_RE = re.compile(r"^(?:show|open)(?:\s+me)?\s+(?:my\s+|the\s+)?(?:media\s+)?library[.!?]?$", re.I)
+REMOVE_RE = re.compile(r"^(?:please\s+)?(?:remove|delete)\s+(?:the\s+)?(?P<q>.+?)\s+from\s+(?:my|the)\s+(?:media\s+)?library[.!?]?$", re.I)
+
+
+def fast_path_m5(text, svc):
+    """('add', query, type) | ('confirm', n) | ('show',) | ('remove', entry_id|None, name) | None."""
+    t = (text or "").strip()
+    m = ADD_RE.match(t)
+    if m:
+        return ("add", m["q"], "podcast" if m["kind"].lower() == "podcast" else "radio")
+    m = ADD_LIB_RE.match(t)
+    if m:
+        return ("add", m["q"], None)
+    if svc.pending_add() is not None:
+        m = YES_RE.match(t)
+        if m:
+            return ("confirm", ORDINALS[m["n"].lower()])
+    if SHOW_RE.match(t):
+        return ("show",)
+    m = REMOVE_RE.match(t)
+    if m:
+        hit = svc.lib.match(m["q"])
+        return ("remove", hit[0]["id"] if hit else None, m["q"])
     return None

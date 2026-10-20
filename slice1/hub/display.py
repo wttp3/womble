@@ -171,10 +171,12 @@ class Display:
             i = 0 if self.step is None else self.step + (1 if action == "recipe.next" else -1)
             i = max(0, min(i, len(steps) - 1))
             await self.emit("recipe.step", {"index": i, "total": len(steps), "text": steps[i]})
-        elif action in ("media.toggle", "media.next", "media.prev"):
+        elif action.startswith("media.") and len(action) <= 80:
             msg = await self.media_handler(action) if self.media_handler else None
-            if msg is None and not self.media_handler:
+            if not self.media_handler:
                 await self.emit("toast", {"text": "Music control isn't connected yet", "kind": "info"})
+            elif msg:
+                await self.emit("toast", {"text": msg, "kind": "info"})
         else:
             log.warning("unknown tap action %r", action)
 

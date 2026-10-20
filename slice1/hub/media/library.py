@@ -179,6 +179,28 @@ class Library:
                 (entry_id, room, target, method, _now(), status, (detail or "")[:200]))
             return cur.lastrowid
 
+    def add_entry(self, e, added_by="voice") -> str:
+        """Insert a confirmed directory entry (M5). Returns its id."""
+        if e.get("type") not in TYPES:
+            raise ValueError("bad type")
+        with self._lock, self.db:
+            self.db.execute(
+                "INSERT INTO entries(id,name,aliases,type,methods,enabled,added_by,created_at,verified_at)"
+                " VALUES(?,?,?,?,?,1,?,?,?)",
+                (e["id"], e["name"], json.dumps(e.get("aliases", [])), e["type"], json.dumps(e.get("methods", [])),
+                 added_by, _now(), _now()))
+        return e["id"]
+
+    def set_enabled(self, entry_id, on: bool) -> bool:
+        """Soft delete / restore. True when the row exists."""
+        with self._lock, self.db:
+            cur = self.db.execute("UPDATE entries SET enabled=? WHERE id=?", (1 if on else 0, entry_id))
+        return cur.rowcount > 0
+
+    def ids(self) -> set:
+        with self._lock:
+            return {r[0] for r in self.db.execute("SELECT id FROM entries").fetchall()}
+
     def mirror_resume(self, ep_key, entry_id, offset_ms):
         with self._lock, self.db:
             if offset_ms:

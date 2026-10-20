@@ -83,11 +83,19 @@ async def media_route(text: str):
     """Exact library names ("play LBC", "stop the radio") skip the LLM."""
     if MEDIA is None:
         return None
-    from media.service import fast_path
-    hit = fast_path(text, MEDIA.lib)
+    from media.service import fast_path, fast_path_m5
+    hit = fast_path_m5(text, MEDIA) or fast_path(text, MEDIA.lib)
     if not hit:
         return None
-    if hit[0] == "stop":
+    if hit[0] == "add":
+        res = await MEDIA.add_search(hit[1], hit[2])
+    elif hit[0] == "confirm":
+        res = await MEDIA.add_confirm(hit[1])
+    elif hit[0] == "show":
+        res = await MEDIA.show_library()
+    elif hit[0] == "remove":
+        res = await MEDIA.remove_entry(hit[1]) if hit[1] else {"speech": f"{hit[2]} isn't in the library."}
+    elif hit[0] == "stop":
         res = await MEDIA.stop(source="box3")
     else:
         res = await MEDIA.play(entry_id=hit[1], room=hit[2], source="box3", mode=hit[3])
@@ -428,6 +436,9 @@ async def main():
         MEDIA = MediaService(media_library(), _mcfg, disp=disp, native=VoiceMonkey(_mcfg, media_library()),
                              devices=_devs, resolver=Resolver(media_library()))
         brain_tools.MEDIA = MEDIA
+        from media.directory import Directory
+        MEDIA.directory = Directory()
+        disp.media_handler = MEDIA.on_tap
         log.info("media routing ready triggers=%d kitchen_pair=%d dispatch=%d",
                  len(_mcfg.get("triggers") or {}), len(_mcfg.get("kitchen_pair") or []), len(_mcfg.get("dispatch") or {}))
     except Exception as e:
@@ -450,7 +461,14 @@ async def main():
         try:
             from alexa_link import AlexaLink
             # Regex first, then the brain. Session key is alexa:<sessionId>, else alexa:<room>.
-            def _alexa_route(text):
+            async def _alexa_route(text):
+                # M5: "add the podcast X" must reach the media library, not the shopping list.
+                if MEDIA is not None:
+                    from media.service import fast_path_m5
+                    if fast_path_m5(text, MEDIA):
+                        res = await media_route(text)
+                        if res is not None:
+                            return res
                 return route_text(text, LISTS, False)
             async def _alexa_brain(text, *, source, session):
                 return await BRAIN.handle(text, source=source, session=session)

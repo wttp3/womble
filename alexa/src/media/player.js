@@ -294,6 +294,7 @@ async function runPending(cmd, body, ctx) {
     return stopRes();
   }
   if (cmd.op === "resume") return resume(body, ctx, true);
+  if (cmd.op === "next" || cmd.op === "prev") return step(body, ctx, cmd.op === "next" ? +1 : -1, true);
   if (cmd.op === "seek" && cur.key !== LIVE) {
     const url = cur.url || (await ctx.store.get(`media:ep:${cur.key}`))[`media:ep:${cur.key}`]?.url;
     if (!url) return sayRes("Nothing is playing.");
