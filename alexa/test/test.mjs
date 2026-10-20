@@ -656,4 +656,6 @@ const { runMediaTests } = await import("./media.mjs");
 await runMediaTests(ok);
 const { runM3Tests } = await import("./m3.mjs");
 await runM3Tests(ok);
+const { runM4Tests } = await import("./m4.mjs");
+await runM4Tests(ok);
 console.log(`ALL ${n} PASSED`);

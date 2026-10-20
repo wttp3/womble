@@ -193,7 +193,7 @@ async function playEntry(entry, ctx, { mode = "auto", index = 0, quiet = false }
     const url = liveUrl(entry);
     if (!url) return sayRes(`I can't play ${entry.name} on this Echo.`);
     const token = makeToken(entry.id, LIVE);
-    await store.put({ [`media:last:${dev}`]: { token, offset_ms: 0, url, entry_id: entry.id } });
+    await store.put({ [`media:last:${dev}`]: { token, offset_ms: 0, url, entry_id: entry.id, playing: true } });
     console.log(`media play entry=${entry.id} kind=radio`);
     notify(ctx, { event: "play", entry_id: entry.id, title: entry.name, offset_ms: 0, duration_s: 0 });
     return playRes(url, token, 0, quiet ? null : `Playing ${entry.name}.`);
@@ -215,7 +215,7 @@ async function playEntry(entry, ctx, { mode = "auto", index = 0, quiet = false }
   }
   await store.put({
     [`media:ep:${key}`]: { entry_id: entry.id, url: ep.url, title: ep.title, pubDate: ep.pubDate, duration_s: ep.durationS },
-    [`media:last:${dev}`]: { token, offset_ms: offset, url: ep.url, entry_id: entry.id },
+    [`media:last:${dev}`]: { token, offset_ms: offset, url: ep.url, entry_id: entry.id, playing: true },
   });
   console.log(`media play entry=${entry.id} kind=podcast ep=${key} offset_ms=${offset} index=${index}`);
   notify(ctx, { event: "play", entry_id: entry.id, ep_key: key, title: ep.title, offset_ms: offset, duration_s: ep.durationS || 0 });
@@ -248,7 +248,61 @@ async function resume(body, ctx, quiet) {
   console.log(`media resume entry=${cur.entryId} ep=${cur.key} offset_ms=${cur.offset}`);
   const epRec = (await ctx.store.get(`media:ep:${cur.key}`))[`media:ep:${cur.key}`];
   notify(ctx, { event: "play", entry_id: cur.entryId, ep_key: cur.key, title: epRec?.title || entry?.name, offset_ms: cur.offset, duration_s: epRec?.duration_s || 0 });
+  await ctx.store.put({ [`media:last:${ctx.dev}`]: { token: cur.token, offset_ms: cur.offset, url, entry_id: cur.entryId, playing: true } });
   return playRes(url, cur.token, cur.offset, null);
+}
+
+// ---------- M4: commands left by the hub before it woke this Echo ----------
+// The hub stores media:pending:<device hash> then fires a routine that opens
+// Frida; the LaunchRequest that follows consumes it once (TTL set by the hub).
+export async function takePending(ctx) {
+  const k = `media:pending:${ctx.dev}`;
+  const p = (await ctx.store.get(k))[k];
+  if (!p || !p.cmd) return null;
+  await ctx.store.del(k);
+  const now = ctx.store.now();
+  if (p.until && now > p.until) return null;
+  return p.cmd;
+}
+
+// Where the stream is now: Alexa gives no PlaybackStarted, so estimate from
+// the last known offset plus wall time while playing.
+async function estimate(ctx) {
+  const k = `media:last:${ctx.dev}`;
+  const last = (await ctx.store.get(k))[k];
+  const t = parseToken(last?.token);
+  if (!t) return null;
+  const run = last.playing && last.at ? Math.max(0, ctx.store.now() - last.at) : 0;
+  return { ...t, token: last.token, url: last.url, offset: (last.offset_ms || 0) + run, playing: !!last.playing };
+}
+
+async function runPending(cmd, body, ctx) {
+  console.log(`media pending op=${String(cmd.op).slice(0, 12)}`);
+  if (ctx.deps.trace) ctx.deps.trace.pending = String(cmd.op).slice(0, 12);
+  if (cmd.op === "play") {
+    const entry = ctx.lib.get(cmd.entry_id);
+    if (!entry) return sayRes("That isn't in the library any more.");
+    return playEntry(entry, ctx, { mode: cmd.mode || "auto", quiet: true });
+  }
+  const cur = await estimate(ctx);
+  if (!cur) return sayRes("Nothing is playing.");
+  if (cmd.op === "pause" || cmd.op === "stop") {
+    // Untested live: opening the skill already took focus; Stop ends the stream.
+    await ctx.store.put({ [`media:last:${ctx.dev}`]: { token: cur.token, offset_ms: cur.key === LIVE ? 0 : cur.offset, url: cur.url, entry_id: cur.entryId, playing: false } });
+    if (cur.key !== LIVE) await ctx.store.put({ [`media:resume:${cur.key}`]: { entry_id: cur.entryId, offset_ms: cur.offset } });
+    notify(ctx, { event: "stopped", entry_id: cur.entryId, ep_key: cur.key === LIVE ? null : cur.key, offset_ms: cur.offset });
+    return stopRes();
+  }
+  if (cmd.op === "resume") return resume(body, ctx, true);
+  if (cmd.op === "seek" && cur.key !== LIVE) {
+    const url = cur.url || (await ctx.store.get(`media:ep:${cur.key}`))[`media:ep:${cur.key}`]?.url;
+    if (!url) return sayRes("Nothing is playing.");
+    const off = Math.max(0, cur.offset + (Number(cmd.delta_ms) || 0));
+    await ctx.store.put({ [`media:last:${ctx.dev}`]: { token: cur.token, offset_ms: off, url, entry_id: cur.entryId, playing: true } });
+    notify(ctx, { event: "play", entry_id: cur.entryId, ep_key: cur.key, offset_ms: off });
+    return playRes(url, cur.token, off, null);
+  }
+  return sayRes("I can't do that with this stream.");
 }
 
 async function step(body, ctx, dir, quiet) {
@@ -300,13 +354,13 @@ async function onEvent(body, ctx) {
   if (type === "AudioPlayer.PlaybackStopped" || type === "AudioPlayer.PlaybackStarted") {
     const prev = (await ctx.store.get(lastKey))[lastKey];
     const url = prev && prev.token === req.token ? prev.url : undefined;
-    const vals = { [lastKey]: { token: req.token, offset_ms: t.key === LIVE ? 0 : off, url, entry_id: t.entryId } };
+    const vals = { [lastKey]: { token: req.token, offset_ms: t.key === LIVE ? 0 : off, url, entry_id: t.entryId, playing: type === "AudioPlayer.PlaybackStarted" } };
     if (t.key !== LIVE && off > 0) vals[`media:resume:${t.key}`] = { entry_id: t.entryId, offset_ms: off };
     await ctx.store.put(vals);
   } else if (type === "AudioPlayer.PlaybackFinished") {
     if (t.key !== LIVE) await ctx.store.del(`media:resume:${t.key}`);
     const prev = (await ctx.store.get(lastKey))[lastKey];
-    await ctx.store.put({ [lastKey]: { token: req.token, offset_ms: 0, url: prev?.url, entry_id: t.entryId, finished: true } });
+    await ctx.store.put({ [lastKey]: { token: req.token, offset_ms: 0, url: prev?.url, entry_id: t.entryId, finished: true, playing: false } });
   }
   // NearlyFinished: enqueue nothing, so a podcast stops at the end (Q5 default).
   return emptyRes();
@@ -326,6 +380,17 @@ export async function handleMedia(body, env, deps = {}, text = null) {
   const isEvent = type.startsWith("AudioPlayer.") || type.startsWith("PlaybackController.") || type === "System.ExceptionEncountered";
   const name = req.intent?.name;
   let parsed = null;
+  // A routine-opened launch has no transcript; a spoken "ask frida …" does.
+  if (type === "LaunchRequest" && !text) {
+    const pctx = { store: new MediaStore(deps.hub ?? env.HUB_LINK, deps.now), dev: await deviceKey(body), deps, pending: [] };
+    const cmd = pctx.dev ? await takePending(pctx) : null;
+    if (cmd) {
+      pctx.lib = await loadLibrary(pctx.store);
+      const res = await runPending(cmd, body, pctx);
+      if (pctx.pending.length) await Promise.all(pctx.pending);
+      return res;
+    }
+  }
   if (!isEvent) {
     if (type !== "IntentRequest" && type !== "LaunchRequest") return null;
     const builtin = ["AMAZON.PauseIntent", "AMAZON.ResumeIntent", "AMAZON.NextIntent", "AMAZON.PreviousIntent",

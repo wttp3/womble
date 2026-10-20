@@ -77,6 +77,7 @@ def load_lists():
     return LISTS.load()
 
 MEDIA = None   # media.service.MediaService (M3), set at startup
+_BG_TASKS = []   # keep references to background tasks started after app start
 
 async def media_route(text: str):
     """Exact library names ("play LBC", "stop the radio") skip the LLM."""
@@ -457,7 +458,7 @@ async def main():
                              devices=alexa_devices, seen=alexa_seen, recent=alexa_recent)
             if MEDIA is not None:
                 link.media = MEDIA; MEDIA.link = link; MEDIA.devices = alexa_devices
-                app["media_refresh"] = asyncio.create_task(supervise("media-refresh", MEDIA.refresh_loop))
+                _BG_TASKS.append(asyncio.create_task(supervise("media-refresh", MEDIA.refresh_loop)))
             async def _link_alert(name, exc):
                 await disp.emit("error", {"message": "Alexa live link stopped", "code": "alexa-link",
                                            "detail": type(exc).__name__})
