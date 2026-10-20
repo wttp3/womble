@@ -5,6 +5,7 @@ Responses and realtime voice both take the flat xAI shape
 the print guard and the list/frame behaviour apply to both APIs.
 
 Slice 1: lists, frame, a guarded print stub, and server-side web_search.
+Media M1: list_library (read-only spoken summary; the grid goes to the frame).
 Timers and the research-bot hand-off are later slices and are not registered.
 """
 import os, re
@@ -81,6 +82,41 @@ async def print_text(args, ctx: ToolContext) -> dict:
     return await _print_guard(ctx)
 
 
+_LIBRARY = None
+
+
+def media_library():
+    """Lazy shared Library (data/media.sqlite, or MEDIA_DB). Seeds idempotently on first use."""
+    global _LIBRARY
+    if _LIBRARY is None:
+        from media.library import Library
+        _LIBRARY = Library()
+    return _LIBRARY
+
+
+async def list_library(args, ctx: ToolContext) -> dict:
+    kind = str((args or {}).get("type") or "").strip().lower() or None
+    if kind in ("radios", "stations", "radio stations"): kind = "radio"
+    if kind in ("podcasts",): kind = "podcast"
+    if kind in ("music", "presets", "playlists"): kind = "music_preset"
+    from media.library import TYPES
+    if kind and kind not in TYPES:
+        kind = None
+    lib = media_library()
+    summary = lib.summary(kind)
+    names = [e["name"] for e in lib.entries(kind)]
+    grid = lib.grid()
+    lines = []
+    for t, label in (("radio", "Radio"), ("podcast", "Podcasts"), ("music_preset", "Music")):
+        if grid[t] and (kind is None or kind == t):
+            lines.append(label + ": " + ", ".join(x["name"] for x in grid[t]))
+    ctx.card = {"type": "text", "title": "Media library", "body": "\n".join(lines) or summary}
+    if ctx.display is not None:
+        await ctx.display.emit("media.library", {"entries": grid, "type": kind})
+    return {"ok": True, "summary": summary, "names": names, "count": len(names),
+            "say": "Speak the summary in one sentence."}
+
+
 class Tool:
     def __init__(self, name, description, parameters, handler, scope):
         self.name = name
@@ -148,6 +184,16 @@ TOOLS = [
             "body": {"type": "string"},
         }, "required": ["title", "body"]},
         print_text, "house",
+    ),
+    Tool(
+        "list_library",
+        "List what Womble can play: radio stations, podcasts and music presets in the media library. "
+        "Use for 'what's in my library' or 'what can you play'. Answer with the one-sentence summary.",
+        {"type": "object", "properties": {
+            "type": {"type": "string", "enum": ["radio", "podcast", "music_preset"],
+                     "description": "Optional: only this kind."},
+        }, "required": []},
+        list_library, "read",
     ),
 ]
 

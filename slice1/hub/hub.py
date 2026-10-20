@@ -388,6 +388,11 @@ async def main():
         except OSError as e:
             if host == HUB_IP: raise
             log.warning("loopback bind failed: %s", e)
+    try:   # media library (M1): create/seed data/media.sqlite so the first list_library is instant
+        from brain.tools import media_library
+        log.info("media library ready entries=%d", len(media_library().entries()))
+    except Exception as e:
+        log.warning("media library unavailable (%s)", type(e).__name__)
     alexa_devices = alexa_seen = alexa_recent = None
     try:   # Alexa jobs from Cloudflare Queue (ALEXA.md §8). A missing token is rechecked inside run().
         from alexa_pull import AlexaPuller, Devices, Seen
