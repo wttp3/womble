@@ -230,7 +230,8 @@ var UP={
    if(c.ok)r.appendChild(B('media.add:'+c.n,'pri',null,'Add'));return r})}
 };
 function libRow(x){if(x.h){var h=E('div','muted',x.h);h.style.fontSize='26px';return h}
- var e=x.e,r=E('div','row'),pl=B('media.play:'+e.id,'sbtn');pl.appendChild(E('i','tri'));r.appendChild(pl);   // CSS triangle: cheaper to paint than 20 SVGsvar s=E('span','',e.name);
+ var e=x.e,r=E('div','row'),pl=B('media.play:'+e.id,'sbtn');pl.appendChild(E('i','tri'));r.appendChild(pl);   // CSS triangle: cheaper to paint than 20 SVGs
+ var s=E('span','',e.name);
  if(e.legal_note){var wn=E('span','muted');wn.innerHTML=' '+ic('warn');s.appendChild(wn)}
  r.appendChild(s);r.appendChild(B('media.remove:'+e.id,'xbtn',null,'\u00d7'));return r}
 
