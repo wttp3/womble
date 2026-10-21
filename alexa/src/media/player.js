@@ -233,6 +233,7 @@ async function current(body, ctx) {
   const t = parseToken(ap.token);
   if (t) return { ...t, token: ap.token, offset: ap.offsetInMilliseconds || 0, activity: ap.playerActivity };
   const last = (await ctx.store.get(`media:last:${ctx.dev}`))[`media:last:${ctx.dev}`];
+  if (last?.finished) return null;   // a finished episode is not offered as a resume (M6)
   const lt = parseToken(last?.token);
   return lt ? { ...lt, token: last.token, offset: last.offset_ms || 0, url: last.url } : null;
 }

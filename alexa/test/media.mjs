@@ -169,6 +169,22 @@ export async function runMediaTests(ok) {
   assert.equal(play(r).audioItem.stream.offsetInMilliseconds, 0);
   ok("media: Next = older episode, Previous = newer, 95 % rule, Finished clears resume");
 
+  // --- M6: hub-reported progress (Alexa sends no AudioPlayer events) ---
+  r = await call(intent("PlayMediaIntent", { media: { value: "daily beast" } }));
+  const tokM6 = play(r).audioItem.stream.token, epM6 = tokM6.split("|")[2];
+  const lastK = [...mem.keys()].find((k) => k.startsWith("media:last:")), devM6 = lastK.split(":")[2];
+  await link.webSocketMessage({}, JSON.stringify({ type: "media.progress", device: devM6, ep_key: epM6, entry_id: "dsr_daily", offset_ms: 90_000 }));
+  assert.equal(mem.get(`media:resume:${epM6}`).offset_ms, 90_000); assert.equal(mem.get(lastK).offset_ms, 90_000);
+  await link.webSocketMessage({}, JSON.stringify({ type: "media.progress", device: "zz", offset_ms: 5 }));
+  assert.equal(mem.get(lastK).offset_ms, 90_000);
+  await link.webSocketMessage({}, JSON.stringify({ type: "media.progress", device: devM6, finished: true }));
+  assert.equal(mem.has(`media:resume:${epM6}`), false); assert.equal(mem.get(lastK).finished, true);
+  r = await call(intent("AMAZON.ResumeIntent"));
+  assert.equal(said(r), "There's nothing to resume.");
+  r = await call(intent("PlayMediaIntent", { media: { value: "daily beast" } }));
+  assert.equal(play(r).audioItem.stream.offsetInMilliseconds, 0); assert.equal(mem.get(lastK).finished, undefined);
+  ok("media M6: hub progress saves resume; finished clears it and is not offered as a resume");
+
   // --- radio ---
   r = await call(intent("PlayMediaIntent", { media: { value: "LBC" } }));
   d = play(r); assert.equal(d.audioItem.stream.url, "https://media-ssl.musicradio.com/LBCLondon");
