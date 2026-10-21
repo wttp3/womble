@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Fixture A</title>
+<item><title>Coming soon: a new season</title><guid>a-trailer</guid><pubDate>Mon, 19 Oct 2026 12:00:00 GMT</pubDate><itunes:episodeType>trailer</itunes:episodeType><enclosure url="https://example.invalid/a/trailer.mp3" type="audio/mpeg"/></item>
+<item><title>Inside the Head: Episode 12</title><guid>xpost-12</guid><pubDate>Sun, 18 Oct 2026 09:00:00 GMT</pubDate><enclosure url="https://example.invalid/a/x12.mp3" type="audio/mpeg"/></item>
+<item><title>Inside the Head: Episode 12</title><guid>xpost-12-repost</guid><pubDate>Sun, 18 Oct 2026 09:00:00 GMT</pubDate><enclosure url="https://example.invalid/a/x12b.mp3" type="audio/mpeg"/></item>
+<item><title>Plain http item</title><guid>http-1</guid><pubDate>Sat, 17 Oct 2026 09:00:00 GMT</pubDate><enclosure url="http://example.invalid/a/plain.mp3" type="audio/mpeg"/></item>
+<item><title>Older full episode</title><guid>a-old</guid><pubDate>Fri, 16 Oct 2026 09:00:00 GMT</pubDate><enclosure url="https://example.invalid/a/old.mp3" type="audio/mpeg"/></item>
+<item><title>No enclosure</title><guid>a-none</guid><pubDate>Tue, 20 Oct 2026 09:00:00 GMT</pubDate></item>
+</channel></rss>

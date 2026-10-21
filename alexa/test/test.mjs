@@ -187,12 +187,14 @@ ok("DO matches the answer to the job id");
 
 function fakeHub({ delayMs = 0, connected = true, answer }) {
   const seen = [];
+  const logged = [];
   const ns = {
     getByName() {
       return {
         async fetch(input, init) {
           const req = input instanceof Request ? input : new Request(input, init);
           const body = await req.json();
+          if (new URL(req.url).pathname === "/reqlog") { logged.push(body); return Response.json({ ok: true }); }
           seen.push(body);
           if (!connected) return Response.json({ offline: true });
           if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
@@ -201,7 +203,7 @@ function fakeHub({ delayMs = 0, connected = true, answer }) {
       };
     },
   };
-  return { ns, seen };
+  return { ns, seen, logged };
 }
 const alexaBody = (request, extra = {}) => body({
   type: "IntentRequest",
@@ -420,7 +422,9 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
 {
   const model = JSON.parse(readFileSync(new URL("../skill/interaction-model.en-GB.json", import.meta.url), "utf8"));
   const lang = model.interactionModel.languageModel;
-  assert.deepEqual(lang.types, []);
+  assert.deepEqual(lang.types.map((t) => t.name), ["MEDIA_NAME", "ROOM"]);
+  assert.ok(!lang.intents.some((i) => i.name === "SpikeIntent"), "SpikeIntent left in the model");
+  for (const b of ["AMAZON.PauseIntent", "AMAZON.ResumeIntent"]) assert.ok(lang.intents.some((i) => i.name === b), b);
   assert.equal(lang.modelConfiguration.fallbackIntentSensitivity.level, "LOW");
   const listIntents = new Set(["AddIntent", "FindIntent", "SaveIntent", "RememberIntent", "CaptureIntent"]);
   const seen = new Map();
@@ -648,4 +652,10 @@ ok("intent name restores the carrier and leaves a full SearchQuery unchanged");
   ok("request type is logged, and a one-shot or fallback transcript reaches the hub");
 }
 assert.ok(sent.length >= qBefore);
+const { runMediaTests } = await import("./media.mjs");
+await runMediaTests(ok);
+const { runM3Tests } = await import("./m3.mjs");
+await runM3Tests(ok);
+const { runM4Tests } = await import("./m4.mjs");
+await runM4Tests(ok);
 console.log(`ALL ${n} PASSED`);

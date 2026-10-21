@@ -3,6 +3,8 @@ import {
   CUTOFF_MS, DEFAULT_REPROMPT, FRAME_LINE, PROGRESSIVE_LINE, PROGRESSIVE_MS,
   hubStub, plainSpeech, toSsml,
 } from "./hub_link.js";
+import { handleMedia } from "./media/player.js";
+import { buildEntry, recordEntry } from "./reqlog.js";
 
 const MAX_SKEW_S = 150;
 const CARRIER_INTENTS = { AddIntent: "add", FindIntent: "find", SaveIntent: "save", RememberIntent: "remember" };
@@ -280,6 +282,7 @@ async function speakJob(body, req, env, name, text, deps) {
   const stub = hubStub(deps.hub ?? env.HUB_LINK);
   const started = Date.now();
   if (!stub) {
+    if (deps.trace) { deps.trace.forwarded = "queue"; deps.trace.text = text; }
     return (await enqueue(env, queueJob)) ? json(say("On it.")) : unreachable();
   }
 
@@ -312,6 +315,7 @@ async function speakJob(body, req, env, name, text, deps) {
   const why = answer?.offline ? "offline" : answer?.timeout ? "timeout" : outcome.kind;
   // Question text is logged. Tokens and URLs are not.
   console.log(`alexa intent=${name} query=${logField(deps.rawQuery, 120)} text=${logField(text, 120)} outcome=${why} wait_ms=${Date.now() - started}`);
+  if (deps.trace) { deps.trace.forwarded = why; deps.trace.text = text; }
   if (answer && answer.offline) {
     return (await enqueue(env, queueJob)) ? json(say("On it.")) : unreachable();
   }
@@ -326,7 +330,21 @@ async function speakJob(body, req, env, name, text, deps) {
 
 // verify(headers, raw) must throw on failure.
 // deps is test-only (hub stub, clock overrides, fetch). The deployed entry does not pass it.
+// Every verified request is added to the DO request log after the reply is built.
 export async function handle(request, env, verify, deps = {}) {
+  const trace = {};
+  const res = await handleInner(request, env, verify, { ...deps, trace });
+  if (!trace.body) return res;
+  const job = (async () => {
+    let out = null;
+    try { out = await res.clone().json(); } catch { out = null; }
+    await recordEntry(deps.hub ?? env.HUB_LINK, await buildEntry(trace.body, out, trace));
+  })().catch(() => {});
+  if (deps.waitUntil) deps.waitUntil(job); else await job;
+  return res;
+}
+
+async function handleInner(request, env, verify, deps) {
   const url = new URL(request.url);
   if (request.method !== "POST" || (url.pathname !== "/" && url.pathname !== "/alexa"))
     return new Response("not found", { status: 404 });
@@ -341,6 +359,16 @@ export async function handle(request, env, verify, deps = {}) {
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > MAX_SKEW_S * 1000) return bad("timestamp");
   const appId = body.session?.application?.applicationId ?? body.context?.System?.application?.applicationId;
   if (appId !== env.ALEXA_SKILL_ID) return bad("application id");
+  deps.trace.body = body;
+
+  // Media (M2): AudioPlayer / PlaybackController events, media intents, and
+  // "play …" / "what's in my library" spoken through the older carrier intents.
+  let mediaText = null;
+  if (req.type === "LaunchRequest" || req.intent?.name === "AMAZON.FallbackIntent") mediaText = heardText(req);
+  else if (req.type === "IntentRequest") mediaText = intentText(req.intent?.name, req.intent);
+  deps.trace.text = mediaText;
+  const media = await handleMedia(body, env, deps, mediaText);
+  if (media) return json(media);
 
   if (req.type === "SessionEndedRequest") {
     logAlexaRequest(req);

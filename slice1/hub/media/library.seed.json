@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "note": "Public publisher URLs only. Per-house trigger ids and device ids live in data/media_local.json (gitignored).",
+  "entries": [
+    {"id": "lbc", "name": "LBC", "type": "radio", "aliases": ["L B C", "LBC London", "LBC radio"],
+     "legal_note": "public mount, unlicensed, personal use",
+     "methods": [
+       {"kind": "native_routine", "target_kind": "stereo_pair", "trigger_ref": "lbc_kitchen"},
+       {"kind": "stream_url", "target_kind": "echo", "url": "https://media-ssl.musicradio.com/LBCLondon", "format": "aac"},
+       {"kind": "stream_url", "target_kind": "echo", "url": "https://media-ssl.musicradio.com/LBCLondonMP3", "format": "mp3"},
+       {"kind": "stream_url", "target_kind": "box3", "url": "https://media-ssl.musicradio.com/LBCLondonMP3", "format": "mp3"}
+     ]},
+    {"id": "bbc_ws", "name": "BBC World Service", "type": "radio", "aliases": ["World Service", "the World Service", "BBC WS"],
+     "legal_note": "BBC World Service: unrestricted",
+     "methods": [
+       {"kind": "stream_url", "target_kind": "echo", "url": "https://as-hls-ww-live.akamaized.net/pool_87948813/live/ww/bbc_world_service/bbc_world_service.isml/bbc_world_service-audio%3d96000.norewind.m3u8", "format": "hls"}
+     ]},
+    {"id": "dsr_network", "name": "Deep State Radio", "type": "podcast", "aliases": ["DSR", "Deep State Radio network", "DSR network"],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/TRGM9230955824", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "dsr_daily", "name": "DSR Daily", "type": "podcast", "aliases": ["the DSR Daily", "Deep State Radio Daily"],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/TRGM2505689189", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "dsr_words_matter", "name": "Words Matter", "type": "podcast", "aliases": [],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/TRGM2789420791", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "dsr_siliconsciousness", "name": "Siliconsciousness", "type": "podcast", "aliases": [],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/TRGM4154109731", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "dsr_ai_energy_climate", "name": "AI Energy and Climate", "type": "podcast", "aliases": ["AI, Energy and Climate"],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/TRGM5790325105", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "db_podcast", "name": "The Daily Beast Podcast", "type": "podcast", "aliases": ["Daily Beast", "Daily Beast podcast"],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/QCD5580850161", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "db_inside_trumps_head", "name": "Inside Trump's Head", "type": "podcast", "aliases": ["Inside Trumps Head"],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/QCD8589611489", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "db_obsessed", "name": "Obsessed", "type": "podcast", "aliases": [],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/QCD2625673518", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "db_royalist", "name": "The Royalist", "type": "podcast", "aliases": ["Royalist"],
+     "methods": [{"kind": "podcast_rss_latest", "target_kind": "any", "feed": "https://feeds.megaphone.fm/QCD7952062339", "format": "mp3", "skip_episode_types": ["trailer", "bonus"]}]},
+    {"id": "am_preset_1", "name": "Kitchen music", "type": "music_preset", "aliases": ["kitchen playlist", "my playlist"],
+     "enabled": false,
+     "legal_note": "Amazon Music playlist chosen by Andrew (Q1, open); disabled until the am_preset_1 routine exists",
+     "methods": [{"kind": "native_routine", "target_kind": "stereo_pair", "trigger_ref": "am_preset_1"}]}
+  ]
+}

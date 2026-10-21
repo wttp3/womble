@@ -3,7 +3,7 @@
 <title>Womble #1</title>
 <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<!-- Womble #1 kitchen display. Spec: DISPLAY.md. Vanilla ES2017 for WebView 106.
+<!-- Womble #1 kitchen display. Spec: DISPLAY.md. Vanilla ES2017 for WebView 106. Screens are built once (sections) and updated in place (frame/f1).
      The dog mark, favicon and apple-touch icon are the only external files. -->
 <style>
 *{box-sizing:border-box}
@@ -19,17 +19,20 @@ svg{width:1em;height:1em;vertical-align:-.12em;fill:none;stroke:currentColor;str
 #brand{color:#ffc94d;font-weight:600}.sep{margin:0 12px;color:#5d6873}
 #dot{display:inline-block;width:14px;height:14px;border-radius:7px;background:#3ccf6e;margin-right:10px;vertical-align:middle}
 #clk{font-size:34px;color:#f2efe8;font-weight:500}
-#main{position:absolute;left:0;top:64px;width:1280px;height:656px;padding:32px 48px}
-body.full #main{height:736px}body.full #np{display:none}
-#np{position:absolute;left:0;top:720px;width:1280px;height:80px;padding:0 32px;display:none;align-items:center;gap:20px;background:#151a20;border-top:2px solid #1d2229;font-size:28px}
+#main{position:absolute;left:0;top:64px;width:1280px;height:656px}
+.scr{position:absolute;left:0;top:0;width:1280px;height:656px;padding:32px 48px;contain:layout paint}
+.scr[hidden]{display:block;visibility:hidden}   /* keep layout; hidden sections are not painted */
+body.full #main,body.full .scr{height:736px}
+body.full #np{display:none}
+#np{contain:layout paint;position:absolute;left:0;top:720px;width:1280px;height:80px;padding:0 32px;display:none;align-items:center;gap:20px;background:#151a20;border-top:2px solid #1d2229;font-size:28px}
 #np.on{display:flex}#np .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#np .t span{color:#9aa3ad}
 #np img,#np .art{width:56px;height:56px;border-radius:6px;background:#3a4a5c;object-fit:cover}
-#toast{position:absolute;left:48px;right:48px;bottom:24px;height:80px;border-radius:14px;background:#26303a;display:none;align-items:center;padding:0 28px;font-size:32px;z-index:5}
-#toast.on{display:flex}body.np #toast{bottom:104px}
+#toast{contain:layout paint;position:absolute;left:48px;right:48px;bottom:24px;height:80px;border-radius:14px;background:#26303a;display:flex;align-items:center;padding:0 28px;font-size:32px;z-index:5;opacity:0;transform:translateY(16px);transition:opacity .15s,transform .15s;pointer-events:none}
+#toast.on{opacity:1;transform:none}body.np #toast{bottom:104px}
 #dim{position:fixed;left:0;top:0;width:1280px;height:800px;background:#000;opacity:0;pointer-events:none;z-index:9}
 #dim.on{opacity:.9}
 .btn{position:absolute;width:120px;height:120px;border-radius:60px;background:#1f262e;color:#f2efe8;display:flex;align-items:center;justify-content:center;font-size:56px;border:0}
-.btn:active{background:#3a4552}.btn.pri{background:#ffc94d;color:#0d0f12}
+.btn:active,.btn.down{background:#3a4552}.btn.pri{background:#ffc94d;color:#0d0f12}
 #x{top:88px;right:48px;width:96px;height:96px;font-size:44px;display:none;z-index:4}#x.on{display:flex}
 .muted{color:#9aa3ad}.accent{color:#ffc94d}.ok{color:#3ccf6e}.err{color:#ff6b5b}
 h1{font-size:64px;line-height:1.1;margin:0 0 24px;font-weight:600;max-width:1060px}
@@ -38,7 +41,7 @@ h1{font-size:64px;line-height:1.1;margin:0 0 24px;font-weight:600;max-width:1060
 .clock{font-size:200px;font-weight:300;line-height:1;letter-spacing:-4px}
 .date{font-size:40px;color:#9aa3ad;margin-top:8px}.wx{font-size:36px;margin-top:40px}
 .foot{position:absolute;left:48px;top:560px;font-size:24px;letter-spacing:2px;color:#5d6873}
-.panel{position:absolute;left:620px;top:32px;width:612px;height:592px;background:#151a20;border-radius:16px;padding:20px 28px;overflow:hidden}
+.panel{contain:layout paint;position:absolute;left:620px;top:32px;width:612px;height:592px;background:#151a20;border-radius:16px;padding:20px 28px;overflow:hidden}
 .panel .h{display:flex;justify-content:space-between;font-size:30px;font-weight:600;margin-bottom:10px}
 .panel ul{margin:0;padding:0;list-style:none;font-size:34px;line-height:1.45}.panel li:before{content:"• ";color:#5d6873}
 .center{height:592px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
@@ -61,12 +64,55 @@ h1{font-size:64px;line-height:1.1;margin:0 0 24px;font-weight:600;max-width:1060
 .rc .btn small{font-size:24px;color:inherit;opacity:.75;margin-top:8px}
 .say{font-size:96px;font-weight:600;line-height:1.1;margin:0 0 12px}.say b{color:#ffc94d}
 .cnt{position:absolute;left:48px;bottom:36px;right:48px;display:flex;justify-content:space-between;font-size:28px;color:#9aa3ad}
-.pb{height:10px;background:#2a313a;border-radius:5px;margin-top:40px}.pb i{display:block;height:10px;background:#ffc94d;border-radius:5px}
+.pb{height:10px;background:#2a313a;border-radius:5px;margin-top:40px;overflow:hidden}.pb i{display:block;height:10px;width:100%;background:#ffc94d;transform-origin:0 0;transform:scaleX(0)}
+.tbtn{font-size:30px}.sbtn{position:static;width:64px;height:64px;font-size:26px;flex:none}.xbtn{position:static;width:56px;height:56px;font-size:22px;flex:none}
+.lib{display:flex;gap:48px;margin-top:16px;margin-right:110px}.lib .col{flex:1;min-width:0}.lib .g{margin-bottom:20px}.lib .row{display:flex;align-items:center;gap:16px;font-size:32px;margin:8px 0}.lib .row span{flex:1}
+.cand{display:flex;align-items:center;gap:24px;margin:22px 0}.cand.no{opacity:.45}.cand .n{font-size:40px;width:48px;color:#9aa3ad}.cand .b{flex:1}.cand .nm{font-size:38px}.cand .dt{font-size:24px;color:#9aa3ad}
+.cand .btn{position:static;width:auto;height:96px;padding:0 28px;font-size:30px}
+.btn.wait{opacity:.6}
+.tri{display:block;width:0;height:0;border-style:solid;border-width:11px 0 11px 18px;border-color:transparent transparent transparent currentColor;margin-left:4px}
+.xbtn{font-size:34px;line-height:1}
+#np .art{position:static;flex:none}
+.cand{padding-right:120px}
 </style></head><body>
 <div id="bar"><div id="brandwrap"><img id="mark" src="/static/womble-mark.webp?v=2" alt="" width="64" height="46"><div id="lockup"><span class="wordmark">WOMBLE</span><span class="sep">·</span><span id="dot"></span><span id="lbl">Connecting…</span></div></div><div id="clk"></div></div>
-<div id="main"></div>
-<button id="x" class="btn" data-a="dismiss"></button>
-<div id="np"></div><div id="toast"></div><div id="dim"></div>
+<div id="main">
+<section class="scr" id="s-idle" hidden>
+ <div style="position:absolute;left:48px;top:32px;width:540px"><div class="clock" id="i-clock"></div><div class="date" id="i-date"></div><div class="wx" id="i-wx"><span class="accent" id="i-wxi"></span> <span id="i-wxt"></span> <span class="muted" id="i-wxr"></span></div></div>
+ <div class="foot" id="i-foot"></div>
+ <button class="recb" data-a="record.menu" style="left:48px;right:auto;top:600px"><span data-i="dot"></span> Record Womble</button>
+ <button class="recb" data-a="media.library" style="left:330px;right:auto;top:600px"><span data-i="music"></span> Library</button>
+ <div class="panel"><div class="h"><span>Shopping</span><span class="muted" id="i-n"></span></div><ul id="i-list"></ul></div>
+</section>
+<section class="scr" id="s-recmenu" hidden><div class="center"><div class="label">Wake-word training · round 2</div><h1>Record Womble</h1><div class="big muted">Who is recording? About 50 “Womble”s and 15 other words, a few minutes.</div>
+ <div class="chips ok" id="rm-done" hidden></div>
+ <div class="rc"><button class="btn pri" data-a="record.start.andrew">Andrew<small id="rm-a"></small></button><button class="btn pri" data-a="record.start.vic">Vic<small id="rm-v"></small></button></div>
+ <div class="chips">Or say “Okay Nabu, record womble for Vic”. Say “stop” or tap ✕ to finish.</div></div></section>
+<section class="scr" id="s-record" hidden><div class="center"><div class="label" id="r-label"></div><div class="say" id="r-say"></div><div class="big" id="r-n"></div>
+ <div class="ring" id="r-ring" style="width:90px;height:90px;border-width:10px;margin:28px 0 12px"></div><div class="chips" id="r-st" style="margin-top:0"></div></div>
+ <div class="cnt"><span id="r-a"></span><span>Say “stop” or tap ✕</span><span id="r-v"></span></div></section>
+<section class="scr" id="s-listening" hidden><div class="center"><div class="ring pulse"></div><h1>Listening…</h1><div class="chips">Say “add …”, “find a recipe for …”, “play …”</div></div></section>
+<section class="scr" id="s-thinking" hidden><div class="center"><div class="ring" style="border-color:#5d8bd6;border-style:dotted"></div><div class="label">You said</div><div class="big" id="t-text"></div><div class="chips" id="t-chip"></div></div></section>
+<section class="scr" id="s-reply" hidden><div class="label" id="re-src"></div><h1 id="re-title"></h1><div class="big" id="re-body"></div><ul class="items" id="re-items" hidden></ul><div class="chips" id="re-more" hidden>Shortened on screen. Say “print that” for the full text.</div></section>
+<section class="scr" id="s-list" hidden><div class="label ok" id="l-label"></div><h1><span id="l-name"></span> <span class="muted" style="font-size:40px" id="l-count"></span></h1><ul class="lg" id="l-items"></ul><div class="chips" id="l-print" style="position:absolute;bottom:40px" hidden></div></section>
+<section class="scr" id="s-research" hidden><div class="center"><div class="label ok" style="font-size:30px"><span data-i="check"></span> Added to research pile</div><h1 style="font-size:72px" id="rs-title"></h1><div class="big muted" id="rs-note" hidden></div><div class="chips" id="rs-count"></div></div></section>
+<section class="scr" id="s-recipe" hidden><div class="rl"><div class="label" id="rc-title"></div><ul id="rc-ing"></ul></div><div class="rr"><div class="label">Method · say “start cooking” or tap</div><ol id="rc-steps"></ol></div>
+ <button class="btn pri" data-a="recipe.next" style="right:48px;bottom:40px"><span data-i="right"></span></button></section>
+<section class="scr" id="s-step" hidden><div class="sn" id="st-n"></div><div class="st" id="st-text"></div><div class="sf">Say “next”, “back”, “repeat” or “ingredients”</div><div class="tm" id="tm" hidden><span data-i="timer"></span> <span id="tm-t"></span></div>
+ <button class="btn" data-a="recipe.prev" style="right:200px;bottom:32px"><span data-i="left"></span></button><button class="btn pri" data-a="recipe.next" style="right:48px;bottom:32px"><span data-i="right"></span></button></section>
+<section class="scr" id="s-playing" hidden><img class="art" id="p-img" alt="" hidden><div class="art" id="p-art"></div>
+ <div class="ni"><div class="label" id="p-label"></div><h1 id="p-title"></h1><div class="big muted" id="p-sub"></div><div class="pb"><i id="p-bar"></i></div>
+ <div class="muted" style="font-size:28px;margin-top:10px;display:flex;justify-content:space-between"><span id="p-pos"></span><span id="p-dur"></span></div></div>
+ <button class="btn" data-a="media.prev" style="left:500px;top:420px"><span data-i="prev"></span></button><button class="btn pri" data-a="media.toggle" id="p-tog" style="left:648px;top:420px"></button><button class="btn" data-a="media.next" style="left:796px;top:420px"><span data-i="next"></span></button>
+ <button class="btn tbtn" data-a="media.back" id="p-back" style="left:500px;top:560px">−30</button><button class="btn tbtn" data-a="media.library" style="left:648px;top:560px"><span data-i="music"></span></button><button class="btn tbtn" data-a="media.fwd" id="p-fwd" style="left:796px;top:560px">+30</button></section>
+<section class="scr" id="s-error" hidden><div class="center"><div class="ring" style="border-color:#ff6b5b"></div><h1 class="err" id="e-msg"></h1><div class="big muted" id="e-detail" hidden></div><div class="chips" id="e-chip"></div></div></section>
+<section class="scr" id="s-library" hidden><div class="label">Media library · tap <span data-i="play"></span> to play in the kitchen</div><div class="lib" id="lb"></div><div class="muted" id="lb-empty" style="font-size:32px;margin-top:24px" hidden>The library is empty.</div>
+ <div class="chips" style="position:absolute;bottom:32px">Say “add the podcast …” or “add the radio station …”</div></section>
+<section class="scr" id="s-cands" hidden><div class="label" id="c-q"></div><div id="c-list"></div><div class="chips" style="position:absolute;bottom:32px">Or say “yes, the first one”</div></section>
+</div>
+<button id="x" class="btn" data-a="dismiss"><span data-i="x"></span></button>
+<div id="np"><div class="art" id="np-art"></div><div class="t"><b id="np-t"></b> <span id="np-s"></span></div><button class="btn" data-a="media.toggle" id="np-tog" style="position:static;width:64px;height:64px;font-size:30px"></button></div>
+<div id="toast"><span class="ok" id="toast-ok" style="margin-right:16px" hidden><span data-i="check"></span></span><span id="toast-t"></span></div><div id="dim"></div>
 <script>
 'use strict';
 var $=function(i){return document.getElementById(i)};
@@ -78,6 +124,9 @@ var ICON={
  prev:'<path d="M18 5L8 12l10 7z" fill="currentColor"/><path d="M5 5v14"/>',
  right:'<path d="M9 5l7 7-7 7"/>', left:'<path d="M15 5l-7 7 7 7"/>',
  check:'<path d="M5 12l5 5 9-10"/>', timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/>',
+ music:'<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+ warn:'<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/>',
+ dot:'<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
  sun:'<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
  cloud:'<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 18z"/>',
  rain:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>',
@@ -93,12 +142,25 @@ var Q=location.search, HOUR=(Q.match(/hour=(\d+)/)||[])[1];
 var DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
 function now(){var d=new Date();if(HOUR!=null){d.setHours(+HOUR,(Q.match(/min=(\d+)/)||[0,7])[1])}return d}
 function hhmm(d){return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+function cap(s){s=String(s);return s.charAt(0).toUpperCase()+s.slice(1)}
+function mmss(t){t=Math.max(0,Math.round(t));return Math.floor(t/60)+':'+('0'+t%60).slice(-2)}
+
+// ---------- tiny DOM helpers: write only when the value changes ----------
+function T(el,s){s=s==null?'':String(s);if(el.textContent!==s)el.textContent=s}
+function H(el,b){b=!b;if(el.hidden!==b)el.hidden=b}            // H(el,true) shows
+function C(el,c){if(el.className!==c)el.className=c}
+function I(el,n){if(el._ic!==n){el.innerHTML=ic(n);el._ic=n}}  // SVG icon, swapped only on change
+function rows(el,arr,make){var k=JSON.stringify(arr);if(el._k===k)return;el._k=k;   // rebuild a list only when its data changed
+ var f=document.createDocumentFragment();arr.forEach(function(x,i){f.appendChild(make(x,i))});el.textContent='';el.appendChild(f)}
+function E(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+function B(action,cls,icon,text,style){var b=E('button','btn '+(cls||''));b.setAttribute('data-a',action);if(icon)b.innerHTML=ic(icon);if(text!=null)b.appendChild(document.createTextNode(text));if(style)b.style.cssText=style;return b}
+[].forEach.call(document.querySelectorAll('[data-i]'),function(e){e.innerHTML=ic(e.getAttribute('data-i'))});
 
 // ---------- model ----------
 var M={name:'Womble #1',features:{},lists:{},weather:null,media:null,recipe:null,step:null,stepData:null};
-var cur={s:'idle',d:{}},timer=null,toastT=null,ws=null,online=false,wakeT=null,timerEnd=0;
-var RANK={recmenu:1,record:8,idle:0,playing:1,research:2,list:2,reply:2,recipe:3,step:4,error:5,thinking:6,listening:7};
-var DUR={recmenu:60,list:12,research:8,recipe:600,error:10,playing:20,thinking:45,listening:12};
+var cur={s:'idle',d:{}},shown=null,timer=null,toastT=null,ws=null,online=false,wakeT=null,timerEnd=0;
+var RANK={library:2,cands:3,recmenu:1,record:8,idle:0,playing:1,research:2,list:2,reply:2,recipe:3,step:4,error:5,thinking:6,listening:7};
+var DUR={library:60,cands:300,recmenu:60,list:12,research:8,recipe:600,error:10,playing:20,thinking:45,listening:12};
 
 function base(){return M.stepData?['step',M.stepData]:['idle',{}]}
 function show(s,d,ttl){
@@ -112,69 +174,95 @@ function show(s,d,ttl){
  if(s!=='idle')wake();
  render();
 }
-function toast(text,kind){var e=$('toast');e.innerHTML=(kind==='ok'?'<span class="ok" style="margin-right:16px">'+ic('check')+'</span>':'')+esc(text);
- e.className='on';clearTimeout(toastT);toastT=setTimeout(function(){e.className=''},6000)}
+function toast(text,kind){H($('toast-ok'),kind==='ok');T($('toast-t'),text);C($('toast'),'on');clearTimeout(toastT);toastT=setTimeout(function(){C($('toast'),'')},6000)}
 function offer(s,d,ttl){ // priority: lower-ranked event during a higher state -> toast (thinking always yields)
  if(cur.s!=='thinking'&&cur.s!=='listening'&&RANK[s]<RANK[cur.s]){toast(d._toast||'Updated','ok');return}
  show(s,d,ttl)}
 
-// ---------- render ----------
+// ---------- screens: each is built once in the HTML; these only update text/attributes ----------
+var RC={};function rc(k){var c=RC[k]||{pos:0,neg:0};return c.pos+' womble · '+c.neg+' other'}
+var UP={
+ idle:function(){var n=now(),w=M.weather,sh=(M.lists.shopping||[]);
+  T($('i-clock'),hhmm(n));T($('i-date'),DAYS[n.getDay()]+' '+n.getDate()+' '+MON[n.getMonth()]);
+  if(w){I($('i-wxi'),wxIcon(w.code));T($('i-wxt'),w.temp+'°');T($('i-wxr'),'· max '+w.max+'° · min '+w.min+'°');C($('i-wx'),'wx')}
+  else{$('i-wxi').innerHTML='';$('i-wxi')._ic='';T($('i-wxt'),'Weather unavailable');T($('i-wxr'),'');C($('i-wx'),'wx muted')}
+  T($('i-foot'),M.name.toUpperCase()+' · SAY “WOMBLE”');T($('i-n'),sh.length);
+  var its=sh.length?sh.slice(0,9).map(function(i){return {t:i}}).concat(sh.length>9?[{t:'+'+(sh.length-9)+' more',m:1}]:[]):[{t:'Nothing yet. Say “add eggs to shopping”',m:2}];
+  rows($('i-list'),its,function(x){var li=E('li',x.m?'muted':'',x.t);if(x.m===1)li.style.listStyle='none';return li})},
+ recmenu:function(d){var dn=$('rm-done');H(dn,d.done);if(d.done){dn.innerHTML=ic('check')+' '+esc(cap(d.speaker||''))+': kept '+esc((d.kept||{}).pos)+' womble, '+esc((d.kept||{}).neg)+' other ('+esc(d.reason)+')'}
+  T($('rm-a'),rc('andrew'));T($('rm-v'),rc('vic'))},
+ record:function(d){var stc=/^rejected/.test(d.status||'')?'err':d.status==='saved'?'ok':d.status==='listening'?'accent':'muted';
+  T($('r-label'),'Recording '+cap(d.speaker||'')+' · '+(d.phase==='neg'?'other words':'Womble')+' · '+(d.prompt||''));
+  var say=$('r-say'),sk=d.phase+'|'+d.phrase;if(say._k!==sk){say._k=sk;say.innerHTML=d.phase==='neg'?'Say “<b>'+esc(d.phrase)+'</b>”':'Say “<b>Womble</b>” now'}
+  var nn=$('r-n'),nk=d.n+'|'+d.total+'|'+d.phase+'|'+d.prompt;if(nn._k!==nk){nn._k=nk;nn.innerHTML=esc(d.n)+' / '+esc(d.total)+(d.phase==='pos'?' · <span class="accent">'+esc(d.prompt)+'</span>':'')}
+  var r=$('r-ring');C(r,'ring'+(d.status==='listening'?' pulse':''));r.style.borderColor=d.status==='listening'?'#ffc94d':'#3a4552';
+  C($('r-st'),'chips '+stc);T($('r-st'),d.status||'');T($('r-a'),'Andrew: '+rc('andrew'));T($('r-v'),'Vic: '+rc('vic'))},
+ listening:function(){},
+ thinking:function(d){T($('t-text'),'“'+(d.text||'')+'”');T($('t-chip'),(d.source==='alexa'?(d.device||d.room||'Echo')+' · ':'')+(d.bot?'Asking the '+d.bot+' bot…':'Working…'))},
+ reply:function(d){T($('re-src'),d.source||'Womble');T($('re-title'),d.title);T($('re-body'),d.short||short(d.body));
+  var it=(d.items||[]).slice(0,6);H($('re-items'),it.length);rows($('re-items'),it,function(i){return E('li','',i)});H($('re-more'),words(d.body)>60)},
+ list:function(d){var hl=d.highlight||[],its=d.items||[],nm=d.list||'list',more=its.length>14,lb=$('l-label');
+  var lk=d.action+'|'+nm;if(lb._k!==lk){lb._k=lk;lb.innerHTML=d.action==='add'?ic('check')+' Added to '+esc(cap(nm)):d.action==='remove'?'Removed from '+esc(cap(nm)):esc(cap(nm))}
+  T($('l-name'),cap(nm));T($('l-count'),'· '+its.length+' items');
+  var show_=its.slice(more?its.length-13:0).map(function(i){return {t:i,h:hl.indexOf(i)>=0}}).concat(more?[{t:'+'+(its.length-13)+' earlier',m:1}]:[]);
+  rows($('l-items'),show_,function(x){return E('li',x.m?'muted':x.h?'hl':'',x.t)});
+  H($('l-print'),M.features.printer);T($('l-print'),'Say “print '+nm+'”')},
+ research:function(d){T($('rs-title'),d.title);H($('rs-note'),d.note);T($('rs-note'),'“'+(d.note||'')+'”');T($('rs-count'),(d.count||'')+' items in the pile · the research bot will report back later')},
+ recipe:function(r){T($('rc-title'),r.title+(r.minutes?' · '+r.minutes+' min':'')+(r.serves?' · serves '+r.serves:''));
+  rows($('rc-ing'),r.ingredients||[],function(i){return E('li','',i)});rows($('rc-steps'),r.steps||[],function(i){return E('li','',i)})},
+ step:function(d){T($('st-n'),'Step '+(d.index+1)+' of '+d.total+(M.recipe?' · '+M.recipe.title:''));T($('st-text'),d.text);H($('tm'),timerEnd);stepTick()},
+ playing:function(d){var m=M.media||d;
+  var img=$('p-img');if(m.art_url){if(img.getAttribute('src')!==m.art_url){img.hidden=true;img.src=m.art_url;(img.decode?img.decode():Promise.resolve()).then(function(){img.hidden=false}).catch(function(){})}H($('p-art'),false)}else{H(img,false);H($('p-art'),true)}
+  T($('p-label'),'Now playing · '+(m.player||''));T($('p-title'),m.title);T($('p-sub'),[m.artist,m.album].filter(Boolean).join(' · '));
+  T($('p-dur'),mmss(m.duration_s||0));I($('p-tog'),m.state==='playing'?'pause':'play');
+  H($('p-back'),m.route!=='native');H($('p-fwd'),m.route!=='native');progress()},
+ error:function(d){T($('e-msg'),d.message);H($('e-detail'),d.detail);T($('e-detail'),d.detail);T($('e-chip'),(d.retry_in_s?'Retrying in '+d.retry_in_s+' s · ':'')+'code '+(d.code||'?'))},
+ library:function(d){var g=d.grid||d.entries||{},TY=[['radio','Radio'],['podcast','Podcasts'],['music_preset','Music presets']],n=0;
+  var groups=TY.map(function(t){var es=g[t[0]]||[];n+=es.length;return {h:t[1],es:es}}).filter(function(x){return x.es.length});
+  H($('lb-empty'),!n);
+  var flat=[];groups.forEach(function(g){flat.push({h:g.h});g.es.forEach(function(e){flat.push({e:e})})});
+  var half=Math.ceil(flat.length/2);if(flat[half-1]&&flat[half-1].h)half--;   // never end a column on a header
+  rows($('lb'),[flat.slice(0,half),flat.slice(half)],function(col){var c=E('div','col');col.forEach(function(x){c.appendChild(libRow(x))});return c})},
+ cands:function(d){T($('c-q'),'Add to library · “'+(d.query||'')+'”');
+  rows($('c-list'),d.candidates||[],function(c){var r=E('div','cand'+(c.ok?'':' no'));r.appendChild(E('div','n',c.n));
+   var b=E('div','b');b.appendChild(E('div','nm',c.name));var dt=E('div','dt',[c.source,c.detail,c.latest].filter(Boolean).join(' · ')+' · ');
+   var ok=E('span',c.ok?'ok':'',c.ok?'✓ plays':(c.why||'won’t play'));dt.appendChild(ok);b.appendChild(dt);r.appendChild(b);
+   if(c.ok)r.appendChild(B('media.add:'+c.n,'pri',null,'Add'));return r})}
+};
+function libRow(x){if(x.h){var h=E('div','muted',x.h);h.style.fontSize='26px';return h}
+ var e=x.e,r=E('div','row'),pl=B('media.play:'+e.id,'sbtn');pl.appendChild(E('i','tri'));r.appendChild(pl);   // CSS triangle: cheaper to paint than 20 SVGs
+ var s=E('span','',e.name);
+ if(e.legal_note){var wn=E('span','muted');wn.innerHTML=' '+ic('warn');s.appendChild(wn)}
+ r.appendChild(s);r.appendChild(B('media.remove:'+e.id,'xbtn',null,'\u00d7'));return r}
+
+
 function render(){
- var s=cur.s,d=cur.d,h='';
- document.body.className=(s==='recipe'||s==='step'||s==='playing')?'full':'';
+ var s=cur.s,d=cur.d;
+ C(document.body,(s==='recipe'||s==='step'||s==='playing'?'full':'')+(document.body.classList.contains('np')?' np':''));
  document.title=M.name;
  var st={listening:['#ffc94d','Listening'],thinking:['#5d8bd6','Working…'],error:['#ff6b5b','Problem']}[s]||(online?['#3ccf6e','Ready']:['#ff6b5b','Offline · reconnecting']);
- $('dot').style.background=st[0];$('lbl').textContent=st[1];
- $('x').className=(s==='idle'||s==='listening')?'btn':'btn on';var RC=M.record||{};function rc(k){var c=RC[k]||{pos:0,neg:0};return c.pos+' womble · '+c.neg+' other'}
- if(s==='idle'){var n=now(),w=M.weather,sh=(M.lists.shopping||[]);
-  h='<div style="position:absolute;left:48px;top:32px;width:540px"><div class="clock">'+hhmm(n)+'</div><div class="date">'+DAYS[n.getDay()]+' '+n.getDate()+' '+MON[n.getMonth()]+'</div>'+
-   (w?'<div class="wx"><span class="accent">'+ic(wxIcon(w.code))+'</span> '+w.temp+'° <span class="muted">· max '+w.max+'° · min '+w.min+'°</span></div>':'<div class="wx muted">Weather unavailable</div>')+'</div>'+
-   '<div class="foot">'+esc(M.name.toUpperCase())+' · SAY “WOMBLE”</div>'+
-   '<button class="recb" data-a="record.menu" style="left:48px;right:auto;top:600px">● Record Womble</button>'+
-   '<div class="panel"><div class="h"><span>Shopping</span><span class="muted">'+sh.length+'</span></div><ul>'+
-   (sh.length?sh.slice(0,9).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+(sh.length>9?'<li class="muted" style="list-style:none">+'+(sh.length-9)+' more</li>':''):'<li class="muted">Nothing yet. Say “add eggs to shopping”</li>')+'</ul></div>';}
- else if(s==='recmenu')h='<div class="center"><div class="label">Wake-word training · round 2</div><h1>Record Womble</h1><div class="big muted">Who is recording? About 50 “Womble”s and 15 other words, a few minutes.</div>'+
-   (d.done?'<div class="chips ok">'+ic('check')+' '+esc(cap(d.speaker||''))+': kept '+(d.kept||{}).pos+' womble, '+(d.kept||{}).neg+' other ('+esc(d.reason)+')</div>':'')+
-   '<div class="rc"><button class="btn pri" data-a="record.start.andrew">Andrew<small>'+rc('andrew')+'</small></button><button class="btn pri" data-a="record.start.vic">Vic<small>'+rc('vic')+'</small></button></div>'+
-   '<div class="chips">Or say “Okay Nabu, record womble for Vic”. Say “stop” or tap ✕ to finish.</div></div>';
- else if(s==='record'){var stc=/^rejected/.test(d.status||'')?'err':d.status==='saved'?'ok':d.status==='listening'?'accent':'muted';
-  h='<div class="center"><div class="label">Recording '+esc(cap(d.speaker||''))+' · '+(d.phase==='neg'?'other words':'Womble')+' · '+esc(d.prompt||'')+'</div>'+
-   '<div class="say">'+(d.phase==='neg'?'Say “<b>'+esc(d.phrase)+'</b>”':'Say “<b>Womble</b>” now')+'</div>'+
-   '<div class="big">'+esc(d.n)+' / '+esc(d.total)+(d.phase==='pos'?' · <span class="accent">'+esc(d.prompt)+'</span>':'')+'</div>'+
-   '<div class="ring'+(d.status==='listening'?' pulse':'')+'" style="width:90px;height:90px;border-width:10px;margin:28px 0 12px;border-color:'+(d.status==='listening'?'#ffc94d':'#3a4552')+'"></div>'+
-   '<div class="chips '+stc+'" style="margin-top:0">'+esc(d.status||'')+'</div></div>'+
-   '<div class="cnt"><span>Andrew: '+rc('andrew')+'</span><span>Say “stop” or tap ✕</span><span>Vic: '+rc('vic')+'</span></div>';}
- else if(s==='listening')h='<div class="center"><div class="ring pulse"></div><h1>Listening…</h1><div class="chips">Say “add …”, “find a recipe for …”, “play …”</div></div>';
- else if(s==='thinking')h='<div class="center"><div class="ring" style="border-color:#5d8bd6;border-style:dotted"></div><div class="label">You said</div><div class="big">“'+esc(d.text)+'”</div><div class="chips">'+(d.source==='alexa'?esc(d.device||d.room||'Echo')+' · ':'')+(d.bot?'Asking the '+esc(d.bot)+' bot…':'Working…')+'</div></div>';
- else if(s==='reply')h='<div class="label">'+esc(d.source||'Womble')+'</div><h1>'+esc(d.title)+'</h1><div class="big">'+esc(d.short||short(d.body))+'</div>'+
-   (d.items&&d.items.length?'<ul class="items">'+d.items.slice(0,6).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+'</ul>':'')+
-   (words(d.body)>60?'<div class="chips">Shortened on screen. Say “print that” for the full text.</div>':'');
- else if(s==='list'){var hl=d.highlight||[],its=d.items||[],nm=d.list||'list',more=its.length>14;
-  h='<div class="label ok">'+(d.action==='add'?ic('check')+' Added to '+esc(cap(nm)):d.action==='remove'?'Removed from '+esc(cap(nm)):esc(cap(nm)))+'</div><h1>'+esc(cap(nm))+' <span class="muted" style="font-size:40px">· '+its.length+' items</span></h1><ul class="lg">'+
-   its.slice(more?its.length-13:0).map(function(i){return '<li class="'+(hl.indexOf(i)>=0?'hl':'')+'">'+esc(i)+'</li>'}).join('')+(more?'<li class="muted">+'+(its.length-13)+' earlier</li>':'')+'</ul>'+
-   (M.features.printer?'<div class="chips" style="position:absolute;bottom:40px">Say “print '+esc(nm)+'”</div>':'');}
- else if(s==='research')h='<div class="center"><div class="label ok" style="font-size:30px">'+ic('check')+' Added to research pile</div><h1 style="font-size:72px">'+esc(d.title)+'</h1>'+(d.note?'<div class="big muted">“'+esc(d.note)+'”</div>':'')+'<div class="chips">'+(d.count||'')+' items in the pile · the research bot will report back later</div></div>';
- else if(s==='recipe'){var r=d;h='<div class="rl"><div class="label">'+esc(r.title)+(r.minutes?' · '+r.minutes+' min':'')+(r.serves?' · serves '+r.serves:'')+'</div><ul>'+(r.ingredients||[]).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+'</ul></div>'+
-   '<div class="rr"><div class="label">Method · say “start cooking” or tap</div><ol>'+(r.steps||[]).map(function(i){return '<li>'+esc(i)+'</li>'}).join('')+'</ol></div>'+
-   '<button class="btn pri" data-a="recipe.next" style="right:48px;bottom:40px">'+ic('right')+'</button>';}
- else if(s==='step'){var tl=timerEnd?Math.max(0,Math.round((timerEnd-Date.now())/1000)):null;
-  h='<div class="sn">Step '+(d.index+1)+' of '+d.total+(M.recipe?' · '+esc(M.recipe.title):'')+'</div><div class="st">'+esc(d.text)+'</div>'+
-   '<div class="sf">Say “next”, “back”, “repeat” or “ingredients”</div>'+(tl!=null?'<div class="tm" id="tm">'+ic('timer')+' '+mmss(tl)+'</div>':'')+
-   '<button class="btn" data-a="recipe.prev" style="right:200px;bottom:32px">'+ic('left')+'</button><button class="btn pri" data-a="recipe.next" style="right:48px;bottom:32px">'+ic('right')+'</button>';}
- else if(s==='playing'){var m=M.media||d,p=m.duration_s?Math.min(100,100*mediaPos()/m.duration_s):0;
-  h=(m.art_url?'<img class="art" src="'+esc(m.art_url)+'">':'<div class="art"></div>')+'<div class="ni"><div class="label">Now playing · '+esc(m.player||'')+'</div><h1>'+esc(m.title)+'</h1><div class="big muted">'+esc([m.artist,m.album].filter(Boolean).join(' · '))+'</div>'+
-   '<div class="pb"><i style="width:'+p.toFixed(1)+'%"></i></div><div class="muted" style="font-size:28px;margin-top:10px;display:flex;justify-content:space-between"><span>'+mmss(mediaPos())+'</span><span>'+mmss(m.duration_s||0)+'</span></div></div>'+
-   '<button class="btn" data-a="media.prev" style="left:500px;top:420px">'+ic('prev')+'</button><button class="btn pri" data-a="media.toggle" style="left:648px;top:420px">'+ic(m.state==='playing'?'pause':'play')+'</button><button class="btn" data-a="media.next" style="left:796px;top:420px">'+ic('next')+'</button>';}
- else if(s==='error')h='<div class="center"><div class="ring" style="border-color:#ff6b5b"></div><h1 class="err">'+esc(d.message)+'</h1>'+(d.detail?'<div class="big muted">'+esc(d.detail)+'</div>':'')+
-   '<div class="chips">'+(d.retry_in_s?'Retrying in '+d.retry_in_s+' s · ':'')+'code '+esc(d.code||'?')+'</div></div>';
- $('main').innerHTML=h;renderNP();
+ if($('dot').style.background!==st[0])$('dot').style.background=st[0];T($('lbl'),st[1]);
+ C($('x'),(s==='idle'||s==='listening')?'btn':'btn on');
+ if(UP[s])UP[s](d);
+ if(shown!==s){if(shown&&$('s-'+shown))$('s-'+shown).hidden=true;if($('s-'+s))$('s-'+s).hidden=false;shown=s}
+ renderNP();
 }
-function cap(s){s=String(s);return s.charAt(0).toUpperCase()+s.slice(1)}
-function mmss(t){t=Math.max(0,Math.round(t));return Math.floor(t/60)+':'+('0'+t%60).slice(-2)}
 var mediaAt=0;function mediaPos(){var m=M.media;if(!m)return 0;return (m.position_s||0)+(m.state==='playing'?(Date.now()-mediaAt)/1000:0)}
-function renderNP(){var m=M.media,e=$('np');if(!m||m.state==='idle'){e.className='';document.body.classList.remove('np');return}
- e.className='on';document.body.classList.add('np');e.innerHTML=(m.art_url?'<img src="'+esc(m.art_url)+'">':'<div class="art"></div>')+'<div class="t"><b>'+esc(m.title)+'</b> <span>· '+esc(m.artist||'')+' · '+esc(m.player||'')+'</span></div>'+
- '<button class="btn" data-a="media.toggle" style="position:static;width:64px;height:64px;font-size:30px">'+ic(m.state==='playing'?'pause':'play')+'</button>'}
+function progress(){var m=M.media;if(!m)return;var p=m.duration_s?Math.min(1,mediaPos()/m.duration_s):0;
+ $('p-bar').style.transform='scaleX('+p.toFixed(4)+')';T($('p-pos'),mmss(mediaPos()))}
+function renderNP(){var m=M.media,e=$('np'),on=!!(m&&m.state!=='idle');
+ C(e,on?'on':'');document.body.classList.toggle('np',on);if(!on)return;
+ T($('np-t'),m.title);T($('np-s'),'· '+(m.artist||'')+' · '+(m.player||''));I($('np-tog'),m.state==='playing'?'pause':'play')}
+// progress on a local 1 Hz timer, only while the playing screen is up and something plays
+setInterval(function(){if(cur.s==='playing'&&M.media&&M.media.state==='playing')progress()},1000);
+
+// ---------- optimistic transport: change the UI at once, the next media.state reconciles ----------
+function optimistic(a){var m=M.media;if(!m||!/^media\.(toggle|fwd|back)$/.test(a))return;
+ var pos=mediaPos();
+ if(a==='media.toggle'){if(m.route==='native')return;m.state=m.state==='playing'?'paused':'playing'}
+ else pos=Math.max(0,pos+(a==='media.fwd'?30:-30));
+ m.position_s=pos;mediaAt=Date.now();
+ if(cur.s==='playing')UP.playing(cur.d);renderNP()}
 
 // ---------- events ----------
 function handle(m){
@@ -183,11 +271,11 @@ function handle(m){
   else m={event:'reply',data:{title:m.title,body:m.body}};}
  var d=m.data||{},ttl=m.ttl_s||null;
  switch(m.event){
- case 'snapshot':M.name=d.device_name||M.name;M.features=d.features||{};M.lists=d.lists||{};M.weather=d.weather;M.media=d.media;mediaAt=Date.now();M.recipe=d.recipe;M.record=d.record||M.record;
+ case 'snapshot':checkVer(d.page_ver);M.name=d.device_name||M.name;M.features=d.features||{};M.lists=d.lists||{};M.weather=d.weather;M.media=d.media;mediaAt=Date.now();M.recipe=d.recipe;RC=d.record||RC;
   if(d.recipe&&d.step!=null){M.stepData={index:d.step,total:d.recipe.steps.length,text:d.recipe.steps[d.step]}}
   if(cur.s==='idle'||cur.s==='step'){var b=base();show(b[0],b[1])}else render();break;
  case 'idle':M.stepData=null;timerEnd=0;show('idle',{});break;
- case 'weather':M.weather=d;if(cur.s==='idle')render();break;
+ case 'weather':M.weather=d;if(cur.s==='idle')UP.idle();break;
  case 'voice.listening':show('listening',d);break;
  case 'voice.heard':show('thinking',d);break;
  case 'voice.cancel':var b2=base();show(b2[0],b2[1]);break;
@@ -196,33 +284,48 @@ function handle(m){
  case 'research.added':d._toast='Added “'+d.title+'” to research pile';offer('research',d,ttl);break;
  case 'recipe':M.recipe=d;M.stepData=null;timerEnd=0;offer('recipe',d,ttl);break;
  case 'recipe.step':M.stepData=d;timerEnd=d.timer_s?Date.now()+d.timer_s*1000:0;show('step',d,0);break;
- case 'media.state':M.media=d;mediaAt=Date.now();if(d.focus){d._toast='Now playing: '+d.title;offer('playing',d,ttl)}else if(cur.s==='playing')render();else renderNP();break;
+ case 'media.library':show('library',{grid:d.grid||d.entries},ttl);break;
+ case 'media.candidates':show('cands',d,ttl);break;
+ case 'media.state':M.media=d;mediaAt=Date.now();if(d.focus){d._toast='Now playing: '+d.title;offer('playing',d,ttl)}else if(cur.s==='playing')UP.playing(d);renderNP();break;
  case 'home.done':toast(d.text,'ok');break;
- case 'record.state':M.record=d.counts||M.record;if(d.active)show('record',d,0);break;
- case 'record.done':M.record=d.counts||M.record;show('recmenu',{done:1,speaker:d.speaker,kept:d.kept,reason:d.reason},30);break;
+ case 'record.state':RC=d.counts||RC;if(d.active)show('record',d,0);break;
+ case 'record.done':RC=d.counts||RC;show('recmenu',{done:1,speaker:d.speaker,kept:d.kept,reason:d.reason},30);break;
  case 'toast':toast(d.text,d.kind);break;
  case 'error':d._toast=d.message;show('error',d,ttl);break;
  }
 }
+// ---------- timing (frame/f1): ack each message once it has been drawn ----------
+function ack(id,tr,p0){var a=performance.now()-p0;requestAnimationFrame(function(){requestAnimationFrame(function(){
+  send({event:'paint_ack',id:id,t_recv:tr,t_paint:Date.now(),apply_ms:Math.round(a),hidden:document.hidden})})})}
+var PAGE_VER=null;function checkVer(v){if(!v)return;if(PAGE_VER&&v!==PAGE_VER){location.reload();return}PAGE_VER=v}
+var fbMs=null;document.addEventListener('pointerdown',function(e){var b=e.target.closest('[data-a]');if(!b)return;var t=performance.now();fbMs=null;
+  b.classList.add('down');optimistic(b.getAttribute('data-a'));
+  requestAnimationFrame(function(){requestAnimationFrame(function(){fbMs=Math.round(performance.now()-t)})});
+  setTimeout(function(){b.classList.remove('down')},250)},true);
 function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-a]');if(!b)return;var a=b.getAttribute('data-a');
  if(a==='record.menu'){show('recmenu',{});return}
  if(a==='dismiss'){M.stepData=null;timerEnd=0;show('idle',{})}
- send({event:'tap',action:a});});
-$('x').innerHTML=ic('x');
+ if(/^media\.(add|remove):/.test(a)){b.classList.add('wait')}
+ send({event:'tap',action:a,fb_ms:fbMs});});
 
 // ---------- night dim 23:00-07:00, brightened by wake/foreground for 60 s ----------
 function night(){var h=now().getHours();return h>=23||h<7}
-function wake(){$('dim').className='';clearTimeout(wakeT);wakeT=setTimeout(dimCheck,60000)}
-function dimCheck(){$('dim').className=(night()&&(cur.s==='idle'||cur.s==='playing'))?'on':''}
+function wake(){C($('dim'),'');clearTimeout(wakeT);wakeT=setTimeout(dimCheck,60000)}
+function dimCheck(){C($('dim'),(night()&&(cur.s==='idle'||cur.s==='playing'))?'on':'')}
 
 // ---------- clock: once per minute aligned to :00; step timer per second only when visible ----------
-function tick(){$('clk').textContent=hhmm(now());if(cur.s==='idle')render();dimCheck();setTimeout(tick,60000-Date.now()%60000+50)}
-setInterval(function(){if(cur.s==='step'&&timerEnd){var e=$('tm'),t=Math.max(0,Math.round((timerEnd-Date.now())/1000));if(e)e.innerHTML=ic('timer')+' '+(t?mmss(t):'Done')}},1000);
+function tick(){T($('clk'),hhmm(now()));if(cur.s==='idle')UP.idle();dimCheck();setTimeout(tick,60000-Date.now()%60000+50)}
+function stepTick(){if(!timerEnd)return;var t=Math.max(0,Math.round((timerEnd-Date.now())/1000));T($('tm-t'),t?mmss(t):'Done')}
+setInterval(function(){if(cur.s==='step'&&timerEnd)stepTick()},1000);
 
 function conn(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
- ws.onopen=function(){online=true;send({event:'hello',client:'kitchen-frame',ver:1});render()};
- ws.onmessage=function(e){try{handle(JSON.parse(e.data))}catch(x){console.log('bad msg',x)}};
+ ws.onopen=function(){online=true;send({event:'hello',client:'kitchen-frame',ver:2});render()};
+ ws.onmessage=function(e){var tr=Date.now(),p0=performance.now(),m;
+  try{m=JSON.parse(e.data)}catch(x){return}
+  if(m.event==='clock.ping'){send({event:'clock.pong',t0:(m.data||{}).t0,t1:Date.now()});return}
+  try{handle(m)}catch(x){console.log('bad msg',x)}
+  if(m.id)ack(m.id,tr,p0)};
  ws.onclose=function(){if(online){online=false;render()}setTimeout(conn,2000+Math.random()*1000)};}
 function fit(){
   var w=window.innerWidth||1280,h=window.innerHeight||800,s=Math.min(w/1280,h/800);

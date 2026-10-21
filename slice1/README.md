@@ -73,3 +73,13 @@ It is the documented path ESPHome voice firmware uses (the same events HA's esph
 | turbo-q4 | en | ~1,020–1,050 | 240–290 |
 Cold load: whisper 5–14 s, Kokoro first call ~29 s (spaCy model download, once). The hub warms both at startup.
 All transcripts were correct; router categories correct. Note: TTS-generated test audio is cleaner than a real kitchen mic.
+
+## Media library (media phase 1, M1)
+
+`hub/media/library.py` keeps the media library in `hub/data/media.sqlite` (gitignored, or `MEDIA_DB`). It is seeded idempotently from the tracked `hub/media/library.seed.json`, which holds public stream and feed URLs only. Per-house trigger ids and device ids go in `hub/data/media_local.json` (gitignored, loaded by `media/local.py`). Names match exactly or by alias first, then by a normalised fuzzy match (≥ 0.85). `media/resolver.py` picks the newest non-trailer episode from a feed (first 30 items, 15-minute cache) and collapses cross-posts. The brain tool `list_library` speaks a one-sentence summary and shows the grouped list on the frame. Try "what's in my library?" on the BOX-3.
+
+```
+python tests/test_media_library.py
+```
+
+BOX-3 15-minute check (§7 of the plan): the current firmware's `media_player` has an announcement pipeline only (48 kHz WAV), no media pipeline, and `ffmpeg` is not installed on the hub. So BOX-3 radio (M6) moves to Phase 2.

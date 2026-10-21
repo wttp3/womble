@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Fixture B</title>
+<item><title>Bonus: listener mail</title><guid>b-bonus</guid><pubDate>Mon, 19 Oct 2026 15:00:00 GMT</pubDate><itunes:episodeType>bonus</itunes:episodeType><enclosure url="https://example.invalid/b/bonus.mp3" type="audio/mpeg"/></item>
+<item><title>Inside the Head: Episode 12</title><guid>xpost-12</guid><pubDate>Sun, 18 Oct 2026 09:00:00 GMT</pubDate><enclosure url="https://example.invalid/b/x12.mp3" type="audio/mpeg"/></item>
+</channel></rss>

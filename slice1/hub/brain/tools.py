@@ -5,6 +5,7 @@ Responses and realtime voice both take the flat xAI shape
 the print guard and the list/frame behaviour apply to both APIs.
 
 Slice 1: lists, frame, a guarded print stub, and server-side web_search.
+Media M1: list_library (read-only spoken summary; the grid goes to the frame).
 Timers and the research-bot hand-off are later slices and are not registered.
 """
 import os, re
@@ -81,6 +82,88 @@ async def print_text(args, ctx: ToolContext) -> dict:
     return await _print_guard(ctx)
 
 
+_LIBRARY = None
+
+
+def media_library():
+    """Lazy shared Library (data/media.sqlite, or MEDIA_DB). Seeds idempotently on first use."""
+    global _LIBRARY
+    if _LIBRARY is None:
+        from media.library import Library
+        _LIBRARY = Library()
+    return _LIBRARY
+
+
+async def list_library(args, ctx: ToolContext) -> dict:
+    kind = str((args or {}).get("type") or "").strip().lower() or None
+    if kind in ("radios", "stations", "radio stations"): kind = "radio"
+    if kind in ("podcasts",): kind = "podcast"
+    if kind in ("music", "presets", "playlists"): kind = "music_preset"
+    from media.library import TYPES
+    if kind and kind not in TYPES:
+        kind = None
+    lib = media_library()
+    summary = lib.summary(kind)
+    names = [e["name"] for e in lib.entries(kind)]
+    grid = lib.grid()
+    lines = []
+    for t, label in (("radio", "Radio"), ("podcast", "Podcasts"), ("music_preset", "Music")):
+        if grid[t] and (kind is None or kind == t):
+            lines.append(label + ": " + ", ".join(x["name"] for x in grid[t]))
+    ctx.card = {"type": "text", "title": "Media library", "body": "\n".join(lines) or summary}
+    if ctx.display is not None:
+        await ctx.display.emit("media.library", {"entries": grid, "type": kind})
+    return {"ok": True, "summary": summary, "names": names, "count": len(names),
+            "say": "Speak the summary in one sentence."}
+
+
+MEDIA = None   # media.service.MediaService, set by the hub at startup (M3)
+
+
+def _media_source(ctx):
+    src = str(ctx.source or "")
+    if src.startswith("alexa:"):
+        return "alexa", src.split(":", 1)[1]
+    return "box3", None
+
+
+async def play_media(args, ctx: ToolContext) -> dict:
+    if MEDIA is None:
+        return {"ok": False, "error": NOT_AVAILABLE}
+    name = str((args or {}).get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "missing name"}
+    if re.match(r"^https?://", name, re.I):
+        return {"ok": False, "error": REFUSED, "reason": "only library entries can be played"}
+    episode = str((args or {}).get("episode") or "").lower()
+    mode = {"latest": "latest", "resume": "resume"}.get(episode, "auto")
+    source, echo = _media_source(ctx)
+    res = await MEDIA.play(name=name, room=(args or {}).get("room"), source=source, echo=echo, mode=mode)
+    if res.get("route") == "frida" and source == "alexa":
+        entry = MEDIA.lib.get(res["entry_id"])
+        res = {**res, "speech": f"Say, play {entry['name'] if entry else name}."}
+    return {"ok": bool(res.get("ok")), "route": res.get("route"), "say": res.get("speech")}
+
+
+async def add_to_library(args, ctx: ToolContext) -> dict:
+    if MEDIA is None:
+        return {"ok": False, "error": NOT_AVAILABLE}
+    q = str((args or {}).get("query") or "").strip()
+    if not q or re.search(r"https?://", q, re.I):
+        return {"ok": False, "say": "Tell me the name of the show or station."}
+    t = (args or {}).get("type")
+    res = await MEDIA.add_search(q, t if t in ("podcast", "radio") else None)
+    return {"ok": bool(res.get("ok")), "say": res.get("speech")}
+
+
+async def stop_media(args, ctx: ToolContext) -> dict:
+    if MEDIA is None:
+        return {"ok": False, "error": NOT_AVAILABLE}
+    source, echo = _media_source(ctx)
+    res = await MEDIA.stop(room=(args or {}).get("room"), source=source, echo=echo)
+    return {"ok": bool(res.get("ok")), "say": res.get("speech")}
+
+
 class Tool:
     def __init__(self, name, description, parameters, handler, scope):
         self.name = name
@@ -148,6 +231,44 @@ TOOLS = [
             "body": {"type": "string"},
         }, "required": ["title", "body"]},
         print_text, "house",
+    ),
+    Tool(
+        "list_library",
+        "List what Womble can play: radio stations, podcasts and music presets in the media library. "
+        "Use for 'what's in my library' or 'what can you play'. Answer with the one-sentence summary.",
+        {"type": "object", "properties": {
+            "type": {"type": "string", "enum": ["radio", "podcast", "music_preset"],
+                     "description": "Optional: only this kind."},
+        }, "required": []},
+        list_library, "read",
+    ),
+    Tool(
+        "play_media",
+        "Play a radio station, podcast or music preset from the media library. Only library names; "
+        "never a URL. Say the returned 'say' line.",
+        {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Library name as spoken, e.g. LBC or the DSR Daily."},
+            "room": {"type": "string", "description": "Optional room, e.g. kitchen."},
+            "episode": {"type": "string", "enum": ["latest", "resume"], "description": "Optional."},
+        }, "required": ["name"]},
+        play_media, "house",
+    ),
+    Tool(
+        "stop_media",
+        "Stop or pause what Womble started playing. Say the returned 'say' line.",
+        {"type": "object", "properties": {"room": {"type": "string"}}, "required": []},
+        stop_media, "house",
+    ),
+    Tool(
+        "add_to_library",
+        "Search the podcast or radio directories for a show to add to the media library. It only "
+        "proposes up to 3 tested candidates on the frame; nothing is added until the user says "
+        "'yes, the first one' or taps Add. Say the returned 'say' line.",
+        {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Show or station name as spoken."},
+            "type": {"type": "string", "enum": ["podcast", "radio"], "description": "Optional."},
+        }, "required": ["query"]},
+        add_to_library, "house",
     ),
 ]
 
