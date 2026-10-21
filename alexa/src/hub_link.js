@@ -166,6 +166,8 @@ export class HubLink {
     } else if (msg.type === "media.pending" && /^[0-9a-f]{16}$/.test(msg.device || "") && msg.cmd && typeof msg.cmd === "object") {
       const ttl = Math.min(120, Math.max(5, Number(msg.ttl_s) || 60));
       await store.put(`media:pending:${msg.device}`, { cmd: msg.cmd, at: Date.now(), until: Date.now() + ttl * 1000 });
+    } else if (msg.type === "media.progress" && /^[0-9a-f]{16}$/.test(msg.device || "")) {
+      await applyProgress(store, msg);
     }
   }
 
@@ -306,4 +308,28 @@ export async function routeHub(request, env) {
   const stub = hubStub(env?.HUB_LINK);
   if (!stub) return new Response("unavailable", { status: 503 });
   return stub.fetch(request);
+}
+
+// Hub -> DO progress for a podcast episode (M6). Alexa sends this skill no
+// AudioPlayer events, so the hub tracks wall-clock progress and reports it:
+//   { type: "media.progress", device, ep_key?, entry_id?, offset_ms, finished }
+// ep_key defaults to the episode in media:last:<device>. Live radio is ignored.
+export async function applyProgress(store, msg) {
+  const lastKey = `media:last:${msg.device}`;
+  const last = await store.get(lastKey);
+  const lastEp = String(last?.token || "").split("|")[2] || null;
+  const ep = /^[0-9a-f]{16}$/.test(msg.ep_key || "") ? msg.ep_key : lastEp;
+  if (!ep || ep === "live") return false;
+  const off = Math.max(0, Math.floor(Number(msg.offset_ms) || 0));
+  const entryId = typeof msg.entry_id === "string" ? msg.entry_id.slice(0, 64) : last?.entry_id ?? null;
+  const same = last && lastEp === ep;
+  if (msg.finished === true) {
+    await store.delete([`media:resume:${ep}`]);
+    if (same) await store.put(lastKey, { ...last, offset_ms: 0, finished: true, playing: false });
+    return true;
+  }
+  const vals = { [`media:resume:${ep}`]: { entry_id: entryId, offset_ms: off } };
+  if (same) vals[lastKey] = { ...last, offset_ms: off, finished: false };
+  await store.put(vals);
+  return true;
 }

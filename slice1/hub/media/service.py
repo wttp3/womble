@@ -13,7 +13,8 @@ dispatcher Echo) come from data/media_local.json. Echo names are the room
 names in data/alexa_devices.json; device ids never leave that file, the
 worker only ever sees a 16-hex hash.
 """
-import asyncio, hashlib, logging, re, time
+import asyncio, hashlib, logging, re, subprocess, time
+from pathlib import Path
 
 log = logging.getLogger("hub.media")
 KITCHEN = "kitchen"
@@ -43,6 +44,7 @@ class MediaService:
         self.directory = None  # media.directory.Directory (M5)
         self.adds = {}         # room -> {"query", "cands", "at"}
         self._seek = {"delta": 0, "task": None}
+        self._ticker = None    # M6 progress task
 
     # ---------- rooms and Echos ----------
     def _devmap(self) -> dict:
@@ -173,7 +175,8 @@ class MediaService:
         if st and st.get("route") in ("frida", "dispatch") and self.dispatcher(target):
             res = await self.dispatch(target, {"op": "pause"})
             if res["ok"]:
-                await self.emit_state(target, {**st, "state": "paused", "focus": False})
+                await self.emit_state(target, {**st, "state": "paused", "focus": False,
+                                               "position_s": self.position(st), "started": self.clock()})
                 return {"ok": True, "speech": "Pausing."}
         if st:
             await self.emit_state(target, {**st, "state": "idle", "focus": False})
@@ -197,7 +200,12 @@ class MediaService:
                                          "player": f"Frida on {echo}", "state": "playing",
                                          "position_s": off / 1000, "duration_s": msg.get("duration_s") or 0,
                                          "focus": True, "entry_id": msg.get("entry_id"), "ep_key": msg.get("ep_key"),
-                                         "room": room, "echo": echo, "route": "frida", "started": self.clock()})
+                                         "room": room, "echo": echo, "route": "frida", "started": self.clock(),
+                                         "device": msg.get("device"), "saved_at": self.clock()})
+            if msg.get("ep_key"):
+                self._ensure_ticker()
+                if not msg.get("duration_s"):
+                    asyncio.create_task(self._fill_duration(room, msg.get("entry_id"), msg["ep_key"]))
         elif ev == "stopped":
             await self.emit_state(room, {**prev, "state": "paused", "position_s": off / 1000, "focus": False,
                                          "entry_id": msg.get("entry_id") or prev.get("entry_id")})
@@ -356,7 +364,8 @@ async def transport(self, op, room=None):
     if op == "pause":
         res = await self.dispatch(room, {"op": "pause"})
         if res["ok"]:
-            await self.emit_state(room, {**st, "state": "paused", "focus": False})
+            await self.emit_state(room, {**st, "state": "paused", "focus": False,
+                                         "position_s": self.position(st), "started": self.clock()})
         return res
     if op in ("resume", "next", "prev"):
         return await self.dispatch(room, {"op": op, "entry_id": st.get("entry_id")})
@@ -429,3 +438,105 @@ def fast_path_m5(text, svc):
         hit = svc.lib.match(m["q"])
         return ("remove", hit[0]["id"] if hit else None, m["q"])
     return None
+
+
+# ---------- M6: episode progress and end (hub-side) ----------
+# Alexa sends this skill no AudioPlayer events (no Started/Stopped/Finished),
+# so the hub tracks wall-clock progress of a podcast it saw start, saves a
+# resume offset every SAVE_EVERY_S, and marks the episode finished once the
+# position passes its duration. Live radio has no ep_key and is exempt.
+TICK_S = 5
+SAVE_EVERY_S = 30
+END_GRACE_S = 15
+FFPROBE = Path(__file__).resolve().parents[3] / ".tools" / "ffmpeg" / "ffprobe"
+
+
+def position(self, st) -> float:
+    pos = float(st.get("position_s") or 0)
+    if st.get("state") == "playing" and st.get("started"):
+        pos += max(0.0, self.clock() - st["started"])
+    return max(0.0, pos)
+
+
+def _ensure_ticker(self):
+    if self._ticker is None or self._ticker.done():
+        self._ticker = asyncio.create_task(self.progress_loop())
+
+
+async def progress_loop(self):
+    while any(st.get("ep_key") and st.get("state") == "playing" for st in self.now.values()):
+        await asyncio.sleep(TICK_S)
+        try:
+            await self.progress_tick()
+        except Exception as e:
+            log.warning("media progress tick failed (%s)", type(e).__name__)
+
+
+async def progress_tick(self):
+    for room, st in list(self.now.items()):
+        if st.get("route") != "frida" or not st.get("ep_key") or st.get("state") != "playing":
+            continue
+        pos, dur = self.position(st), float(st.get("duration_s") or 0)
+        if dur and pos >= dur + END_GRACE_S:
+            await self.finish_episode(room, st)
+        elif self.clock() - (st.get("saved_at") or 0) >= SAVE_EVERY_S:
+            st["saved_at"] = self.clock()
+            await self._send_progress(st, int(min(pos, dur or pos) * 1000), False)
+
+
+async def _send_progress(self, st, offset_ms, finished):
+    self.lib.mirror_resume(st["ep_key"], st.get("entry_id"), 0 if finished else offset_ms)
+    if self.link is not None and st.get("device"):
+        await self.link.send_typed({"type": "media.progress", "device": st["device"], "ep_key": st["ep_key"],
+                                    "entry_id": st.get("entry_id"), "offset_ms": offset_ms, "finished": finished})
+
+
+async def finish_episode(self, room, st):
+    log.info("media event=finished entry=%s room=%s source=hub", st.get("entry_id"), room)
+    await self._send_progress(st, 0, True)
+    await self.emit_state(room, {**st, "state": "idle", "focus": False,
+                                 "position_s": float(st.get("duration_s") or 0), "started": self.clock()})
+
+
+def episode_duration(self, entry_id, key):
+    """Seconds for an episode: feed itunes:duration, else ffprobe on the enclosure. 0 if unknown."""
+    from .resolver import ep_key as _ek, parse_items, _http_get
+    entry = self.lib.get(entry_id) if entry_id else None
+    feed = next((m.get("feed") for m in (entry or {}).get("methods", []) if m.get("kind") == "podcast_rss_latest"), None)
+    if not feed:
+        return 0
+    items = self.resolver._items(feed) if self.resolver is not None else parse_items(_http_get(feed))
+    it = next((i for i in items if i.get("url") and _ek(i.get("guid"), i["url"]) == key), None)
+    if not it:
+        return 0
+    if it.get("duration_s"):
+        return it["duration_s"]
+    return ffprobe_duration(it["url"])
+
+
+def ffprobe_duration(url) -> float:
+    if not FFPROBE.exists():
+        return 0
+    try:
+        r = subprocess.run([str(FFPROBE), "-v", "error", "-ca_file", "/etc/ssl/cert.pem", "-show_entries",
+                            "format=duration", "-of", "csv=p=0", url], capture_output=True, text=True, timeout=45)
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0
+
+
+async def _fill_duration(self, room, entry_id, key):
+    try:
+        dur = await asyncio.to_thread(self.episode_duration, entry_id, key)
+    except Exception as e:
+        log.warning("media duration lookup failed (%s)", type(e).__name__)
+        return
+    st = self.now.get(room)
+    if dur and st and st.get("ep_key") == key and not st.get("duration_s"):
+        log.info("media duration entry=%s s=%d", entry_id, dur)
+        await self.emit_state(room, {**st, "duration_s": dur})
+
+
+for _f in (position, _ensure_ticker, progress_loop, progress_tick, _send_progress, finish_episode,
+           episode_duration, _fill_duration):
+    setattr(MediaService, _f.__name__, _f)

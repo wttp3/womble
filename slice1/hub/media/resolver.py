@@ -37,6 +37,14 @@ def _ts(pub):
         return 0.0
 
 
+def parse_duration(v) -> int:
+    """itunes:duration as seconds ("2187", "36:27", "1:02:03"); 0 if unknown."""
+    try:
+        return sum(int(float(p)) * 60 ** i for i, p in enumerate(reversed((v or "").strip().split(":")))) if v and v.strip() else 0
+    except ValueError:
+        return 0
+
+
 def parse_items(xml: bytes, limit=MAX_ITEMS) -> list:
     """First `limit` items as dicts. Stops parsing once enough items are read."""
     items = []
@@ -55,6 +63,7 @@ def parse_items(xml: bytes, limit=MAX_ITEMS) -> list:
                 "episode_type": (el.findtext(ITUNES + "episodeType") or "full").strip().lower(),
                 "url": enc.get("url") if enc is not None else None,
                 "mime": enc.get("type") if enc is not None else None,
+                "duration_s": parse_duration(el.findtext(ITUNES + "duration")),
             })
             el.clear()
             if len(items) >= limit:
