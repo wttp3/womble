@@ -47,7 +47,7 @@ async def main():
     async with TestClient(TestServer(app2)) as client:
         page = await client.get("/")
         html = await page.text()
-        check(page.status == 200 and "WOMBLE" in html and "/static/womble-mark.webp" in html, "dashboard mark")
+        check(page.status == 200 and "FRAME_VERSION" in html and "/static/womble-head.webp" in html, "v2.6 rail badge")
         check('rel="icon"' in html and "apple-touch-icon" in html, "icon links")
         for path in ("/static/womble-mark.webp", "/favicon.png", "/favicon.ico", "/apple-touch-icon.png"):
             resp = await client.get(path)

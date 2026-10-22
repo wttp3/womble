@@ -80,7 +80,8 @@ async def supervise(name, coro_factory, on_give_up=None, fails_before_alert=3, f
             log.warning("%s stopped", name)
             return
 WEATHER_TTL = 15 * 60
-PING_EVERY_S = 60
+PING_EVERY_S = 30          # frame marks Stale after 90 s without any message (RAIL-SPEC)
+HUB_VERSION = "2.6"         # answered to the frame's hello; shown in its diagnostics toast
 STATS_WINDOW = 200
 STATS_LOG_EVERY = 25
 
@@ -296,6 +297,9 @@ class Display:
                 if ev == "tap":
                     if j.get("fb_ms") is not None: self.paint.on_tap_fb(j.get("fb_ms"))
                     await self.on_tap(str(j.get("action", "")))
+                elif ev == "hello":
+                    await ws.send_str(json.dumps({"v": 1, "event": "hello", "ts": time.time(),
+                                                  "data": {"hub_version": HUB_VERSION, "hub_addr": request.host}}))
                 elif ev == "paint_ack": self._on_ack(ws, j)
                 elif ev == "clock.pong":
                     self.paint.on_pong(ws, float(j.get("t0", 0)), float(j.get("t1", 0)), time.time() * 1000)
