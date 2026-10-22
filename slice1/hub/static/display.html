@@ -56,7 +56,6 @@ h1{font-size:56px;line-height:1.15;margin:0 0 24px;max-width:900px}
 .label{font-size:28px;color:var(--text-muted);margin-bottom:12px}
 .center{height:600px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 .ring{width:200px;height:200px;border-radius:100px;border:14px solid var(--text);margin-bottom:40px}
-#s-listening .ring{border-color:var(--listen)}
 .pulse{animation:p 1.6s ease-in-out infinite}@keyframes p{50%{opacity:.35}}
 .chips{margin-top:28px;font-size:28px;color:var(--text-muted)}
 .lg{columns:2;column-gap:64px;font-size:40px;line-height:1.5;list-style:none;padding:0;margin:0}
@@ -100,6 +99,51 @@ h1{font-size:56px;line-height:1.15;margin:0 0 24px;max-width:900px}
 .tile .ct small{font:400 28px/1 var(--font-ui);color:var(--text-muted);margin-left:12px;letter-spacing:0}
 .hfoot{position:absolute;left:112px;bottom:4px;display:flex;gap:16px}
 .hfoot .recb{position:static}
+/* chat (CHAT-SPEC v2.6 + v2.7): content per chat-v2.6-*, rail per home-v2.6. Roboto 400/700 only. */
+.cq{font-size:28px;color:var(--text-muted)}
+.lis96{font-size:96px;line-height:1.1;margin-top:88px}
+.ks{font-size:40px;line-height:1.25;margin-top:24px;max-width:960px}
+.qt{font-size:56px;line-height:1.2;margin-top:16px;max-width:960px;max-height:404px;overflow:hidden}
+.kf{font-size:120px;line-height:1;letter-spacing:-3px;margin-top:40px;max-width:960px}
+.kf.sm{font-size:72px;letter-spacing:-1px;line-height:1.1}
+.lead{font-size:56px;line-height:1.15;font-weight:700;margin-top:32px;max-width:960px;max-height:130px;overflow:hidden}
+.rbody{font-size:34px;line-height:1.4;margin-top:24px;max-width:960px;height:286px;overflow:hidden}
+.cfoot{position:absolute;left:112px;right:48px;top:568px;height:80px;display:flex;align-items:center;font-size:28px;color:var(--text-muted)}
+.pgr{margin-left:auto;display:flex;align-items:center}.pgr span{margin:0 24px;color:var(--text)}
+.pgr .btn{position:static;width:120px;height:80px;border-radius:16px;font-size:32px}
+.pgr .btn[disabled]{background:none;border:2px solid var(--line);color:var(--line)}
+.lnk{height:64px;padding:0 20px;margin-left:16px;border-radius:16px;background:var(--surface);color:var(--text);font-size:28px}
+.ritems{list-style:none;padding:0;margin:24px 0 0;display:flex;flex-wrap:wrap;max-width:1000px}
+.ritems li{width:100%;height:72px;line-height:70px;border-bottom:2px solid var(--line);font-size:32px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:24px}
+.ritems.two li{width:50%}
+.rh h1{font-size:48px;line-height:1.1;margin:0}.rh p{font-size:28px;color:var(--text-muted);margin:12px 0 0}
+.ing{list-style:none;padding:0;margin:24px 0 0;display:flex;flex-wrap:wrap;max-width:1000px}
+.ing li{width:50%;height:64px;display:flex;align-items:center;border-bottom:2px solid var(--line);font-size:32px;white-space:nowrap;overflow:hidden;padding-right:40px}
+.ing li b{width:136px;flex:none;overflow:hidden;text-overflow:ellipsis}
+.ing li span{overflow:hidden;text-overflow:ellipsis}
+.act{position:absolute;left:112px;right:48px;top:568px;display:flex;align-items:center}
+.act .hint{margin-right:auto;font-size:28px;color:var(--text-muted)}
+.bb{height:96px;min-width:160px;padding:0 40px;border-radius:16px;background:var(--surface);color:var(--text);font-size:32px;font-weight:700;margin-left:16px}
+.bb.pri{background:var(--text);color:var(--bg)}.bb.down,.bb:active{background:var(--surface-pressed);color:var(--text)}
+.stx{font-size:72px;line-height:1.15;font-weight:700;margin-top:24px;max-width:960px;max-height:250px;overflow:hidden}
+.stx.sm{font-size:56px;max-height:260px}
+.chip{display:inline-flex;align-items:center;height:80px;padding:0 28px;border-radius:40px;background:var(--surface);color:var(--tan);font-size:40px;margin-top:32px;font-variant-numeric:tabular-nums}
+.chip svg{width:40px;height:40px;margin-right:16px}
+.rsl{font-size:28px;color:var(--sage)}
+/* band chat states */
+#band .pgs{position:absolute;left:0;top:0;width:1280px;height:4px;background:var(--line);display:none}
+#band .pgs i{display:block;height:4px;background:var(--text);transform-origin:0 50%;transform:scaleX(0)}
+#band.spk .pgs{display:block}
+#band.lis{background:var(--listen);color:var(--on-listen,#242321)}#band.lis p,#band.lis .bi{color:#242321}
+#band.lis .bb{background:#242321;color:var(--listen)}
+#band.err .bi{color:var(--err)}
+.lv{display:none;align-items:center;height:64px;margin-right:32px}.lv i{width:10px;height:64px;margin-left:8px;border-radius:5px;background:#242321}
+#band.lis .lv{display:flex}
+#band.lis .bi svg{animation:p 1.6s ease-in-out infinite}   /* the only endless animation: while listening */
+.dots i{display:inline-block;width:14px;height:14px;border-radius:7px;background:var(--text);margin:0 5px}
+#badge img{transition:transform 280ms ease-out;}
+body.listening #badge img{transform:translateY(6px) rotate(15deg)}
+body.night #band.lis{background:#5A2530;color:#F0C9A0}body.night #band.lis p,body.night #band.lis .bi{color:#F0C9A0}
 /* night 23:00-07:00 (v2.7): same layout, night tokens, all status glyphs #B08850 */
 body.night,body.night #rail,body.night #badge,body.night #band,body.night .tile{background:#000}
 body.night{color:var(--night-text)}
@@ -133,27 +177,32 @@ body.night #badge{outline-color:var(--night-line);border-color:#000}body.night #
 <section class="scr" id="s-record" hidden><div class="center"><div class="label" id="r-label"></div><div class="say" id="r-say"></div><div class="big" id="r-n"></div>
  <div class="ring" id="r-ring" style="width:90px;height:90px;border-width:10px;margin:28px 0 12px"></div><div class="chips" id="r-st" style="margin-top:0"></div></div>
  <div class="cnt"><span id="r-a"></span><span>Say “stop” or tap ✕</span><span id="r-v"></span></div></section>
-<section class="scr" id="s-listening" hidden><div class="center"><div class="ring pulse"></div><h1>Listening…</h1><div class="chips">Say “add …”, “find a recipe for …”, “play …”</div></div></section>
-<section class="scr" id="s-thinking" hidden><div class="center"><div class="ring" style="border-color:#5d8bd6;border-style:dotted"></div><div class="label">You said</div><div class="big" id="t-text"></div><div class="chips" id="t-chip"></div></div></section>
-<section class="scr" id="s-reply" hidden><div class="label" id="re-src"></div><h1 id="re-title"></h1><div class="big" id="re-body"></div><ul class="items" id="re-items" hidden></ul><div class="chips" id="re-more" hidden>Shortened on screen. Say “print that” for the full text.</div></section>
+<section class="scr" id="s-listening" hidden><div class="lis96">Listening…</div><div class="ks muted">Ask a question, or say “add … to shopping”.</div></section>
+<section class="scr" id="s-thinking" hidden><div class="cq" id="t-q">You said</div><div class="qt" id="t-text"></div><div class="cq" id="t-chip" style="margin-top:32px"></div></section>
+<section class="scr" id="s-reply" hidden><div class="cq" id="re-src"></div>
+ <div id="re-short" hidden><div class="kf" id="re-kf"></div><div class="ks" id="re-line"></div></div>
+ <div id="re-long" hidden><div class="lead" id="re-title"></div><div class="rbody" id="re-body"></div>
+  <div class="cfoot"><span id="re-follow"></span><button class="lnk" data-a="chat.follow" id="re-resume" hidden>Resume</button><div class="pgr"><button class="btn" data-a="chat.prev" id="re-prev" aria-label="Previous page"><span data-i="left"></span></button><span id="re-pg"></span><button class="btn" data-a="chat.next" id="re-next" aria-label="Next page"><span data-i="right"></span></button></div></div>
+  <div class="chips" id="re-more" hidden></div></div>
+ <div id="re-list" hidden><div class="lead" id="re-ltitle"></div><ul class="ritems" id="re-items"></ul></div></section>
 <section class="scr" id="s-list" hidden><div class="label ok" id="l-label"></div><h1><span id="l-name"></span> <span class="muted" style="font-size:40px" id="l-count"></span></h1><ul class="lg" id="l-items"></ul><div class="chips" id="l-print" style="position:absolute;bottom:40px" hidden></div></section>
-<section class="scr" id="s-research" hidden><div class="center"><div class="label ok" style="font-size:30px"><span data-i="check"></span> Added to research pile</div><h1 style="font-size:72px" id="rs-title"></h1><div class="big muted" id="rs-note" hidden></div><div class="chips" id="rs-count"></div></div></section>
-<section class="scr" id="s-recipe" hidden><div class="rl"><div class="label" id="rc-title"></div><ul id="rc-ing"></ul></div><div class="rr"><div class="label">Method · say “start cooking” or tap</div><ol id="rc-steps"></ol></div>
- <button class="btn pri" data-a="recipe.next" style="right:48px;bottom:40px"><span data-i="right"></span></button></section>
-<section class="scr" id="s-step" hidden><div class="sn" id="st-n"></div><div class="st" id="st-text"></div><div class="sf">Say “next”, “back”, “repeat” or “ingredients”</div><div class="tm" id="tm" hidden><span data-i="timer"></span> <span id="tm-t"></span></div>
- <button class="btn" data-a="recipe.prev" style="right:200px;bottom:32px"><span data-i="left"></span></button><button class="btn pri" data-a="recipe.next" style="right:48px;bottom:32px"><span data-i="right"></span></button></section>
+<section class="scr" id="s-research" hidden><div class="rsl"><span data-i="check"></span> Added to research pile</div><div class="lead" id="rs-title"></div><div class="ks muted" id="rs-note" hidden></div><div class="cq" id="rs-count" style="margin-top:32px"></div></section>
+<section class="scr" id="s-recipe" hidden><div class="rh"><h1 id="rc-title"></h1><p id="rc-meta"></p></div><ul class="ing" id="rc-ing"></ul>
+ <div class="act"><span class="hint" id="rc-hint">Say “start cooking” or “read the ingredients”</span><button class="bb" data-a="chat.ingpage" id="rc-more" hidden></button><button class="bb pri" data-a="recipe.next">Start cooking</button></div><ol id="rc-steps" hidden></ol></section>
+<section class="scr" id="s-step" hidden><div class="cq" id="st-n"></div><div class="stx" id="st-text"></div><div class="chip" id="tm" hidden><span data-i="timer"></span><span id="tm-t"></span></div>
+ <div class="act"><span class="hint" id="st-hint">Say “next”, “repeat” or “start timer”</span><button class="bb" data-a="recipe.prev">Back</button><button class="bb" data-a="recipe.repeat">Repeat</button><button class="bb pri" data-a="recipe.next">Next</button></div></section>
 <section class="scr" id="s-playing" hidden><img class="art" id="p-img" alt="" hidden><div class="art" id="p-art"></div>
  <div class="ni"><div class="label" id="p-label"></div><h1 id="p-title"></h1><div class="big muted" id="p-sub"></div><div class="pb"><i id="p-bar"></i></div>
  <div class="muted" style="font-size:28px;margin-top:10px;display:flex;justify-content:space-between"><span id="p-pos"></span><span id="p-dur"></span></div></div>
  <button class="btn" data-a="media.prev" style="left:500px;top:420px"><span data-i="prev"></span></button><button class="btn pri" data-a="media.toggle" id="p-tog" style="left:648px;top:420px"></button><button class="btn" data-a="media.next" style="left:796px;top:420px"><span data-i="next"></span></button>
  <button class="btn tbtn" data-a="media.back" id="p-back" style="left:500px;top:560px">−30</button><button class="btn tbtn" data-a="media.library" style="left:648px;top:560px"><span data-i="music"></span></button><button class="btn tbtn" data-a="media.fwd" id="p-fwd" style="left:796px;top:560px">+30</button></section>
-<section class="scr" id="s-error" hidden><div class="center"><div class="ring" style="border-color:#ff6b5b"></div><h1 class="err" id="e-msg"></h1><div class="big muted" id="e-detail" hidden></div><div class="chips" id="e-chip"></div></div></section>
+<section class="scr" id="s-error" hidden><div class="cq err">Something went wrong</div><div class="lead" id="e-msg"></div><div class="ks muted" id="e-detail" hidden></div><div class="cq" id="e-chip" style="margin-top:32px"></div></section>
 <section class="scr" id="s-library" hidden><div class="label">Media library · tap <span data-i="play"></span> to play in the kitchen</div><div class="lib" id="lb"></div><div class="muted" id="lb-empty" style="font-size:32px;margin-top:24px" hidden>The library is empty.</div>
  <div class="chips" style="position:absolute;bottom:32px">Say “add the podcast …” or “add the radio station …”</div></section>
 <section class="scr" id="s-cands" hidden><div class="label" id="c-q"></div><div id="c-list"></div><div class="chips" style="position:absolute;bottom:32px">Or say “yes, the first one”</div></section>
 </div>
 <button id="x" class="btn" data-a="dismiss"><span data-i="x"></span></button>
-<footer id="band"><div class="bi" id="band-i"></div><div class="tx"><b id="band-t"></b><p id="band-s"></p></div><span id="np" hidden><span id="np-t"></span><span id="np-s"></span><span id="np-art"></span></span><button data-a="media.toggle" id="np-tog" hidden></button></footer>
+<footer id="band"><div class="pgs"><i id="band-pg"></i></div><div class="bi" id="band-i"></div><div class="tx"><b id="band-t"></b><p id="band-s"></p></div><span id="np" hidden><span id="np-t"></span><span id="np-s"></span><span id="np-art"></span></span><div class="lv"><i style="transform:scaleY(.35)"></i><i style="transform:scaleY(.7)"></i><i></i><i style="transform:scaleY(.55)"></i><i style="transform:scaleY(.8)"></i><i style="transform:scaleY(.4)"></i></div><button data-a="media.toggle" id="np-tog" hidden></button><button class="bb pri" data-a="voice.stop" id="band-btn" hidden></button></footer>
 <div id="toast"><span class="ok" id="toast-ok" style="margin-right:16px" hidden><span data-i="check"></span></span><span id="toast-t"></span></div><div id="dim"></div>
 <script>
 'use strict';
@@ -181,6 +230,9 @@ var ICON={
  cloud:'<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 18z"/>',
  rain:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>',
  snow:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M8 19h.01M12 21h.01M16 19h.01" stroke-width="3"/>',
+ mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+ spk:'<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 8a5 5 0 0 1 0 8M19 5a9 9 0 0 1 0 14"/>',
+ stop:'<path d="M12 2l8.5 5v10L12 22l-8.5-5V7z"/><path d="M12 8v5M12 16h.01"/>',
  storm:'<path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 15z"/><path d="M12 15l-2 4h4l-2 4"/>'
 };
 function ic(n){return '<svg viewBox="0 0 24 24">'+ICON[n]+'</svg>'}
@@ -212,10 +264,34 @@ var cur={s:'idle',d:{}},shown=null,timer=null,toastT=null,ws=null,online=false,w
 var RANK={library:2,cands:3,recmenu:1,record:8,idle:0,playing:1,research:2,list:2,reply:2,recipe:3,step:4,error:5,thinking:6,listening:7};
 var DUR={library:60,cands:300,recmenu:60,list:12,research:8,recipe:600,error:10,playing:20,thinking:45,listening:12};
 
+// ---------- chat: display kind, key fact, estimated speech (2.6 words/s, labelled approximate) ----------
+var WPS=2.6,PAGE_W=60,ingPage=0,errEnd=0,speakEnd=0,chatPg=0,chatPages=[],follow=true,pageT=null,prevName='Home';
+function firstSentence(t){var m=String(t||'').match(/^.*?[.!?](\s|$)/);return (m?m[0]:String(t||'')).trim()}
+function kind(d){if(d.display)return d.display;var w=words(d.body);
+ if(d.items&&d.items.length)return 'list';if(w<=12)return 'speak';if(w<=25&&(d.key_fact||d.short))return 'short';return w<=25?'short':'long'}
+function fmtMin(m){m=+m;return m>=60?Math.floor(m/60)+' h'+(m%60?' '+m%60:''):m+' min'}
+function splitQty(t){var m=String(t).match(/^([\d½¼¾⅓⅔.,\/-]+\s*(?:kg|g|ml|l|tbsp|tsp|cups?|cloves?|sprigs?|bulbs?|pinch|handful|cans?|tins?)?\.?)\s+(.*)$/i);return m?[m[1],m[2]]:['',String(t)]}
+function prepReply(d){d._at=Date.now();d.display=kind(d);
+ if(d.display==='short'){var fs=firstSentence(d.body);d._kf=d.key_fact||d.title||fs;d._line=d._kf===fs?String(d.body).slice(fs.length).trim()||'':fs}
+ var w=String(d.body||'').split(/\s+/).filter(Boolean);chatPages=[];for(var i=0;i<w.length;i+=PAGE_W)chatPages.push(w.slice(i,i+PAGE_W).join(' '));if(!chatPages.length)chatPages=[''];
+ chatPg=0;follow=true;speakEnd=d._at+Math.max(1,w.length)/WPS*1000;return d}
+function pageRender(){var n=chatPages.length;T($('re-body'),chatPages[chatPg]);T($('re-pg'),'Page '+(chatPg+1)+' of '+n);
+ $('re-prev').disabled=chatPg===0;$('re-next').disabled=chatPg>=n-1;H($('re-resume'),!follow&&Date.now()<speakEnd);
+ T($('re-follow'),Date.now()>=speakEnd?'Tap to page':follow?'Following her voice ≈ approximate':'Paused following');
+ var bp=$('band-pg');if(bp)bp.style.transform='scaleX('+((chatPg+1)/n).toFixed(3)+')'}
+function followTick(){clearTimeout(pageT);if(cur.s!=='reply'||cur.d.display!=='long')return;
+ if(follow&&Date.now()<speakEnd){var el=0,t=Date.now()-cur.d._at;for(var i=0;i<chatPages.length;i++){el+=words(chatPages[i])/WPS*1000;if(t<el)break}
+  var p=Math.min(i,chatPages.length-1);if(p!==chatPg){chatPg=p}pageT=setTimeout(followTick,Math.max(200,el-t))}
+ pageRender();renderNP()}
+function speaking(){return cur.s==='reply'&&Date.now()<speakEnd&&!cur.d._stopped}
+function afterSpeech(){if(cur.s!=='reply')return;renderNP();if(cur.d.display==='long')pageRender()}
 function base(){return M.stepData?['step',M.stepData]:['idle',{}]}
 function show(s,d,ttl){
  if(!navLock)navSec=null;cur={s:s,d:d||{}};clearTimeout(timer);
- var t=ttl!=null?ttl:(s==='reply'?Math.min(90,30+Math.round(words(d.short||d.body)/10)):DUR[s]);
+ var t=ttl!=null?ttl:(s==='reply'?(d.display==='short'?Math.max(8,Math.round((speakEnd-Date.now())/1000)+8):Math.round((speakEnd-Date.now())/1000)+180):DUR[s]);
+ if(s==='reply'){clearTimeout(pageT);setTimeout(afterSpeech,Math.max(0,speakEnd-Date.now())+50);if(d.display==='long')setTimeout(followTick,0)}
+ if(s==='recipe')ingPage=0;
+ document.body.classList.toggle('listening',s==='listening');
  if(s==='error'&&d.blocking)t=0;
  if(s==='thinking')t=45;
  if(t)timer=setTimeout(function(){
@@ -248,25 +324,32 @@ var UP={
   var r=$('r-ring');C(r,'ring'+(d.status==='listening'?' pulse':''));r.style.borderColor=d.status==='listening'?'#ffc94d':'#3a4552';
   C($('r-st'),'chips '+stc);T($('r-st'),d.status||'');T($('r-a'),'Andrew: '+rc('andrew'));T($('r-v'),'Vic: '+rc('vic'))},
  listening:function(){},
- thinking:function(d){T($('t-text'),'“'+(d.text||'')+'”');T($('t-chip'),(d.source==='alexa'?(d.device||d.room||'Echo')+' · ':'')+(d.bot?'Asking the '+d.bot+' bot…':'Working…'))},
- reply:function(d){T($('re-src'),d.source||'Womble');T($('re-title'),d.title);T($('re-body'),d.short||short(d.body));
-  var it=(d.items||[]).slice(0,6);H($('re-items'),it.length);rows($('re-items'),it,function(i){return E('li','',i)});H($('re-more'),words(d.body)>60)},
+ thinking:function(d){T($('t-q'),'You said · '+hhmm(new Date(d._at||Date.now())));T($('t-text'),'“'+(d.text||'')+'”');T($('t-chip'),(d.source==='alexa'?(d.device||d.room||'Echo')+' · ':'')+(d.bot?'Asking the '+d.bot+' bot…':''))},
+ reply:function(d){var k=d.display;T($('re-src'),(d.question?'“'+d.question+'” · ':'')+hhmm(new Date(d._at||Date.now())));
+  H($('re-short'),k==='short');H($('re-long'),k==='long');H($('re-list'),k==='list');
+  if(k==='short'){var kf=d._kf;T($('re-kf'),kf);C($('re-kf'),'kf'+(String(kf).length>16?' sm':''));T($('re-line'),d._line)}
+  else if(k==='list'){T($('re-ltitle'),d.title||d.key_fact||'');var it=(d.items||[]).slice(0,6),ul=$('re-items');C(ul,'ritems'+(it.length>3?' two':''));rows(ul,it,function(i){return E('li','',i)})}
+  else{T($('re-title'),d.key_fact||d.title||'');pageRender()}},
  list:function(d){var hl=d.highlight||[],its=d.items||[],nm=d.list||'list',more=its.length>14,lb=$('l-label');
   var lk=d.action+'|'+nm;if(lb._k!==lk){lb._k=lk;lb.innerHTML=d.action==='add'?ic('check')+' Added to '+esc(cap(nm)):d.action==='remove'?'Removed from '+esc(cap(nm)):esc(cap(nm))}
   T($('l-name'),cap(nm));T($('l-count'),'· '+its.length+' items');
   var show_=its.slice(more?its.length-13:0).map(function(i){return {t:i,h:hl.indexOf(i)>=0}}).concat(more?[{t:'+'+(its.length-13)+' earlier',m:1}]:[]);
   rows($('l-items'),show_,function(x){return E('li',x.m?'muted':x.h?'hl':'',x.t)});
   H($('l-print'),M.features.printer);T($('l-print'),'Say “print '+nm+'”')},
- research:function(d){T($('rs-title'),d.title);H($('rs-note'),d.note);T($('rs-note'),'“'+(d.note||'')+'”');T($('rs-count'),(d.count||'')+' items in the pile · the research bot will report back later')},
- recipe:function(r){T($('rc-title'),r.title+(r.minutes?' · '+r.minutes+' min':'')+(r.serves?' · serves '+r.serves:''));
-  rows($('rc-ing'),r.ingredients||[],function(i){return E('li','',i)});rows($('rc-steps'),r.steps||[],function(i){return E('li','',i)})},
- step:function(d){T($('st-n'),'Step '+(d.index+1)+' of '+d.total+(M.recipe?' · '+M.recipe.title:''));T($('st-text'),d.text);H($('tm'),timerEnd);stepTick()},
+ research:function(d){T($('rs-title'),d.title);H($('rs-note'),d.note);T($('rs-note'),'“'+(d.note||'')+'”');T($('rs-count'),(d.count?d.count+' items in the pile · ':'')+'the research bot will report back later')},
+ recipe:function(r){var ing=r.ingredients||[],pages=Math.max(1,Math.ceil(ing.length/8)),p=Math.min(ingPage,pages-1);
+  T($('rc-title'),r.title);T($('rc-meta'),[r.minutes?fmtMin(r.minutes):'',r.serves?'serves '+r.serves:'',(r.steps||[]).length+' steps'].filter(Boolean).join(' · '));
+  H($('rc-more'),pages>1);T($('rc-more'),'Ingredients '+(p+1)+' of '+pages);
+  rows($('rc-ing'),ing.slice(p*8,p*8+8),function(i){var q=splitQty(i),li=E('li');li.appendChild(E('b','',q[0]));li.appendChild(E('span','',q[1]));return li});
+  rows($('rc-steps'),r.steps||[],function(i){return E('li','',i)})},
+ step:function(d){T($('st-n'),'Step '+(d.index+1)+' of '+d.total+(M.recipe?' · '+M.recipe.title:''));var tx=$('st-text');T(tx,d.text);C(tx,'stx'+(String(d.text||'').length>90?' sm':''));
+  T($('st-hint'),'Say “next”, “repeat”'+(d.timer_s?' or “start timer”':''));H($('tm'),timerEnd);stepTick()},
  playing:function(d){var m=M.media||d;
   var img=$('p-img');if(m.art_url){if(img.getAttribute('src')!==m.art_url){img.hidden=true;img.src=m.art_url;(img.decode?img.decode():Promise.resolve()).then(function(){img.hidden=false}).catch(function(){})}H($('p-art'),false)}else{H(img,false);H($('p-art'),true)}
   T($('p-label'),'Now playing · '+(m.player||''));T($('p-title'),m.title);T($('p-sub'),[m.artist,m.album].filter(Boolean).join(' · '));
   T($('p-dur'),mmss(m.duration_s||0));I($('p-tog'),m.state==='playing'?'pause':'play');
   H($('p-back'),m.route!=='native');H($('p-fwd'),m.route!=='native');progress()},
- error:function(d){T($('e-msg'),d.message);H($('e-detail'),d.detail);T($('e-detail'),d.detail);T($('e-chip'),(d.retry_in_s?'Retrying in '+d.retry_in_s+' s · ':'')+'code '+(d.code||'?'))},
+ error:function(d){T($('e-msg'),d.message);H($('e-detail'),d.detail);T($('e-detail'),d.detail);T($('e-chip'),'code '+(d.code||'?'));errEnd=d.retry_in_s?Date.now()+d.retry_in_s*1000:0},
  library:function(d){var g=d.grid||d.entries||{},TY=[['radio','Radio'],['podcast','Podcasts'],['music_preset','Music presets']],n=0;
   var groups=TY.map(function(t){var es=g[t[0]]||[];n+=es.length;return {h:t[1],es:es}}).filter(function(x){return x.es.length});
   H($('lb-empty'),!n);
@@ -301,10 +384,17 @@ function progress(){var m=M.media;if(!m)return;var p=m.duration_s?Math.min(1,med
  $('p-bar').style.transform='scaleX('+p.toFixed(4)+')';T($('p-pos'),mmss(mediaPos()))}
 function renderNP(){var m=M.media,on=!!(m&&m.state!=='idle'),cs=connState(),down=cs==='offline'||cs==='retrying';
  document.body.classList.toggle('np',on);var bd=$('band'),tog=$('np-tog');
- if(down){C(bd,cs==='offline'?'off':'retry');I($('band-i'),cs);H(tog,false);
+ if(down){C(bd,cs==='offline'?'off':'retry');I($('band-i'),cs);H(tog,false);H($('band-btn'),false);
   T($('band-t'),cs==='offline'?'Offline · retrying every few seconds':'Reconnecting to the hub…');
   T($('band-s'),'Can’t reach the hub since '+hhmm(new Date(disconnectedAt))+' · times and lists may be out of date');return}
- C(bd,'');H(tog,on);
+ var bt=$('band-btn'),cs2=cur.s;
+ if(cs2==='listening'||cs2==='thinking'||speaking()||cs2==='error'){H(tog,false);H(bt,cs2!=='error');
+  if(cs2==='listening'){C(bd,'lis');I($('band-i'),'mic');T($('band-t'),'Listening…');T($('band-s'),'Speak to the box · tap Cancel to stop');T(bt,'Cancel');return}
+  if(cs2==='thinking'){C(bd,'');var bi=$('band-i');if(bi._ic!=='dots'){bi.innerHTML='<span class="dots"><i></i><i></i><i></i></span>';bi._ic='dots'}T($('band-t'),'One moment…');T($('band-s'),cur.d.task||'');T(bt,'Cancel');return}
+  if(cs2==='error'){C(bd,'err');I($('band-i'),'stop');T($('band-t'),cur.d.message||'Problem');T($('band-s'),errEnd&&errEnd>Date.now()?'Retrying in '+Math.ceil((errEnd-Date.now())/1000)+' s':'code '+(cur.d.code||'?'));return}
+  C(bd,cur.d.display==='long'?'spk':'');I($('band-i'),'spk');T($('band-t'),'Speaking…');T(bt,'Stop');
+  T($('band-s'),cur.d.display==='long'?'Page '+(chatPg+1)+' of '+chatPages.length+' · ≈ approximate':'Back to '+prevName+' 8 s after she finishes');return}
+ H(bt,false);C(bd,'');H(tog,on);
  if(on){I($('band-i'),'phones');T($('band-t'),m.title);T($('band-s'),[m.artist,m.player].filter(Boolean).join(' · '));I(tog,m.state==='playing'?'pause':'play')}
  else{I($('band-i'),'chat');T($('band-t'),'Say “Womble”');T($('band-s'),M.name)}}
 // ---------- rail: section marker + connection status (icon only; the word is in aria-label and the diagnostics toast) ----------
@@ -323,7 +413,8 @@ function renderRail(){var cs=connState(),st=$('stat'),sec=secOf(cur.s);
 function ago(t){if(!t)return 'never';var x=Math.round((Date.now()-t)/1000);return x<90?x+' s ago':Math.round(x/60)+' min ago'}
 function diag(){var cs=connState(),since=online?connectedAt:disconnectedAt;
  toast(SW[cs]+' since '+hhmm(new Date(since))+' · Hub '+(hubAddr||location.host||'?')+' · last message '+ago(lastMsgAt)+' · frame '+FRAME_VERSION+' · hub '+(hubVer||'?')+' · reconnects today '+reconnects,'info',10000)}
-setInterval(renderRail,5000);   // Stale/Offline need time to pass, not a message
+setInterval(renderRail,5000);
+setInterval(function(){if(cur.s==='error'&&errEnd)renderNP()},1000);   // Stale/Offline need time to pass, not a message
 // progress on a local 1 Hz timer, only while the playing screen is up and something plays
 setInterval(function(){if(cur.s==='playing'&&M.media&&M.media.state==='playing')progress()},1000);
 
@@ -347,10 +438,10 @@ function handle(m){
   if(cur.s==='idle'||cur.s==='step'){var b=base();show(b[0],b[1])}else render();break;
  case 'idle':M.stepData=null;timerEnd=0;show('idle',{});break;
  case 'weather':M.weather=d;if(cur.s==='idle')UP.idle();break;
- case 'voice.listening':show('listening',d);break;
- case 'voice.heard':show('thinking',d);break;
+ case 'voice.listening':prevName=cap(secOf(cur.s)||'home');show('listening',d);break;
+ case 'voice.heard':d._at=Date.now();show('thinking',d);break;
  case 'voice.cancel':var b2=base();show(b2[0],b2[1]);break;
- case 'reply':lastReply=d;offer('reply',d,ttl);break;
+ case 'reply':prepReply(d);if(d.display==='speak'){var b3=base();if(cur.s==='thinking'||cur.s==='listening')show(b3[0],b3[1]);toast(d.key_fact||d.short||d.title||d.body,'info',4000);break}lastReply=d;offer('reply',d,ttl);break;
  case 'hello':hubVer=d.hub_version||hubVer;hubAddr=d.hub_addr||hubAddr;break;
  case 'list.updated':M.lists[d.list]=d.items||[];d._toast=(d.action==='add'?'Added '+(d.highlight||[]).join(', ')+' to ':'Updated ')+d.list;offer('list',d,ttl);break;
  case 'research.added':d._toast='Added “'+d.title+'” to research pile';offer('research',d,ttl);break;
@@ -370,13 +461,18 @@ function handle(m){
 function ack(id,tr,p0){var a=performance.now()-p0;requestAnimationFrame(function(){requestAnimationFrame(function(){
   send({event:'paint_ack',id:id,t_recv:tr,t_paint:Date.now(),apply_ms:Math.round(a),hidden:document.hidden})})})}
 var PAGE_VER=null;function checkVer(v){if(!v)return;if(PAGE_VER&&v!==PAGE_VER){location.reload();return}PAGE_VER=v}
-var fbMs=null;document.addEventListener('pointerdown',function(e){var b=e.target.closest('[data-a]');if(!b)return;var t=performance.now();fbMs=null;
+var fbMs=null;document.addEventListener('pointerdown',function(e){if(cur.s==='reply'&&cur.d.display==='short'&&!speaking()){clearTimeout(timer);timer=setTimeout(function(){var b=base();show(b[0],b[1])},180000)}var b=e.target.closest('[data-a]');if(!b)return;var t=performance.now();fbMs=null;
   b.classList.add('down');optimistic(b.getAttribute('data-a'));
   requestAnimationFrame(function(){requestAnimationFrame(function(){fbMs=Math.round(performance.now()-t)})});
   setTimeout(function(){b.classList.remove('down')},250)},true);
 function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-a]');if(!b)return;var a=b.getAttribute('data-a');
  if(a==='record.menu'){navSec=null;show('recmenu',{});return}
+ if(a==='chat.prev'||a==='chat.next'){chatPg=Math.max(0,Math.min(chatPages.length-1,chatPg+(a==='chat.next'?1:-1)));follow=false;clearTimeout(pageT);pageRender();renderNP();return}
+ if(a==='chat.follow'){follow=true;followTick();return}
+ if(a==='chat.ingpage'){ingPage++;if(M.recipe&&ingPage*8>=(M.recipe.ingredients||[]).length)ingPage=0;UP.recipe(M.recipe||cur.d);return}
+ if(a==='voice.stop'){if(cur.s==='reply'){cur.d._stopped=true;speakEnd=0;clearTimeout(timer);timer=setTimeout(function(){var b=base();show(b[0],b[1])},180000);clearTimeout(pageT);render()}
+  else if(cur.s==='listening'||cur.s==='thinking'){var b4=base();show(b4[0],b4[1])}}
  if(a==='nav.status'){if($('toast').className==='on'&&toastDiag){C($('toast'),'');toastDiag=false}else{diag();toastDiag=true}return}
  toastDiag=false;
  if(a==='nav.home'){a='dismiss'}
@@ -392,7 +488,7 @@ var lastReply=null;
 var navLock=false;
 function navTo(k){navLock=true;setTimeout(function(){navLock=false},0);var L=M.lists||{};
  if(k==='weather'){navSec='weather';show('idle',{});return}
- if(k==='chat'){navSec='chat';if(lastReply)show('reply',lastReply,90);else{navSec=null;toast('No answers yet. Say “Womble”','info')}return}
+ if(k==='chat'){navSec='chat';if(lastReply){speakEnd=0;lastReply._stopped=true;chatPg=0;follow=false;show('reply',lastReply,180)}else{navSec=null;toast('No answers yet. Say “Womble”','info')}return}
  var li=k.indexOf('list:')===0?k.slice(5):'shopping';
  navSec='lists';show('list',{list:li,action:'show',items:L[li]||[],highlight:[]},60)}
 // ---------- night dim 23:00-07:00, brightened by wake/foreground for 60 s ----------

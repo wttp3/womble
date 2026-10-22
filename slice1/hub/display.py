@@ -5,7 +5,7 @@ hub.py mounts it with  disp = Display(...); disp.add_routes(app)
 Env: DISPLAY_NAME ("Womble #1"), WEATHER_LAT/WEATHER_LON (Madrid default),
      DISPLAY_PRINTER (0/1, feature flag), DISPLAY_TOKEN (optional bearer for POST /api/event;
      without it /api/event only accepts requests from 127.0.0.1)."""
-import asyncio, json, logging, os, time, uuid
+import asyncio, json, logging, os, re, time, uuid
 from collections import OrderedDict, deque
 from pathlib import Path
 from aiohttp import web, ClientSession, ClientTimeout
@@ -167,6 +167,34 @@ class PaintStats:
 SHORT_WORDS = 60
 FOREGROUND = {"reply", "list.updated", "research.added", "recipe", "recipe.step", "error"}
 
+KEY_FACT_WORDS = 12
+SPEAK_WORDS = 12     # CHAT-SPEC default rules: body <= 12 words and no items -> spoken only
+SHORT_LIMIT = 25     # body <= 25 words -> short card; longer -> paged long card
+_SENT = re.compile(r"^(.+?[.!?])(?:\s|$)", re.S)
+
+
+def first_sentence(text: str) -> str:
+    t = " ".join((text or "").split())
+    m = _SENT.match(t)
+    return (m.group(1) if m else t).strip()
+
+
+def key_fact(body: str, title: str = "") -> str | None:
+    """A real short fact for the 120px line: the first sentence when it is <= 12 words, else None (never the 60-word cut)."""
+    fs = first_sentence(body)
+    if fs and len(fs.split()) <= KEY_FACT_WORDS:
+        return fs.rstrip(".")
+    return None
+
+
+def reply_display(body: str, items=None) -> str:
+    """'speak' | 'short' | 'long' | 'list' per CHAT-SPEC's default rules."""
+    if items: return "list"
+    n = len((body or "").split())
+    if n <= SPEAK_WORDS: return "speak"
+    return "short" if n <= SHORT_LIMIT else "long"
+
+
 def shorten(text: str, n: int = SHORT_WORDS) -> str:
     w = text.split()
     return text if len(w) <= n else " ".join(w[:n]).rstrip(",.;:") + " …"
@@ -183,6 +211,7 @@ class Display:
         self.weather = None; self.weather_ts = 0.0
         self.recipe = None; self.step = None; self.media = None
         self.last_reply = None            # full text kept for "print that"
+        self.voice_stop_handler = None    # async fn() to stop TTS on voice.stop; None = frame-only stop
         self.media_handler = None         # async fn(action) -> str|None ; set by hub when MA plugin exists
         self.taps: list[dict] = []
         self.tap_hooks: list = []          # async fn(action) called for every tap (recorder)
@@ -196,7 +225,10 @@ class Display:
         data = dict(data or {})
         if event == "reply":
             body = data.get("body", ""); self.last_reply = body
-            data.setdefault("short", shorten(body))
+            data.setdefault("short", shorten(body))       # kept for older pages
+            data.setdefault("id", uuid.uuid4().hex)
+            data.setdefault("display", reply_display(body, data.get("items")))
+            if "key_fact" not in data: data["key_fact"] = key_fact(body, data.get("title", ""))
         if event == "recipe": self.recipe = data; self.step = None
         if event == "recipe.step": self.step = data.get("index")
         if event == "media.state": self.media = data
@@ -262,6 +294,15 @@ class Display:
         if action.startswith("record."): return
         if action == "dismiss":
             await self.emit("idle")
+        elif action == "voice.stop":
+            # The frame already stopped its own speaking state; stopping TTS on the BOX-3 is up to the hub's hook.
+            if self.voice_stop_handler:
+                try: await self.voice_stop_handler()
+                except Exception as e: log.warning("voice.stop handler failed: %s", e)
+        elif action == "recipe.repeat" and self.recipe and self.step is not None:
+            steps = self.recipe.get("steps", [])
+            if 0 <= self.step < len(steps):
+                await self.emit("recipe.step", {"index": self.step, "total": len(steps), "text": steps[self.step]})
         elif action in ("recipe.next", "recipe.prev") and self.recipe:
             steps = self.recipe.get("steps", [])
             i = 0 if self.step is None else self.step + (1 if action == "recipe.next" else -1)
