@@ -38,12 +38,24 @@ log = logging.getLogger("hub")
 
 # ---------- STT ----------
 import mlx_whisper
+try:
+    import mlx.core as _mx
+    _mx.set_cache_limit(int(os.environ.get("MLX_CACHE_MB", "256")) * 1024 * 1024)  # cap MLX's Metal buffer cache
+except Exception:
+    _mx = None
+def _mlx_release():
+    """Drop cached Metal buffers after each STT/TTS run so GPU memory doesn't grow."""
+    if _mx is not None:
+        try: _mx.clear_cache()
+        except Exception: pass
+
 def transcribe_whisper(pcm: bytes) -> str:
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
     if 0 < peak < 0.5: audio = audio * min(0.5 / peak, 20.0)   # software gain for quiet mic
     r = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER_MODEL, language=os.environ.get("WHISPER_LANG") or None,
                                condition_on_previous_text=False, temperature=0.0)
+    _mlx_release()
     return r.get("text", "").strip()
 
 import stt_xai
@@ -62,12 +74,25 @@ def transcribe(pcm: bytes) -> str:
                 log.warning("xai stt failed (%s); falling back to whisper", reason)
     t1 = time.perf_counter(); text = transcribe_whisper(pcm)
     log.info("stt engine=whisper%s latency=%.0fms", " (fallback)" if reason else "", (time.perf_counter() - t1) * 1000)
+    if not _whisper_primary(): _whisper_unload()
     return text
+
+def _whisper_primary() -> bool:
+    return os.environ.get("STT_ENGINE", "xai").lower() == "whisper"
+
+def _whisper_unload():
+    """xAI is the main STT, so the ~1.6 GB whisper model is loaded only for a fallback and then dropped."""
+    try:
+        from mlx_whisper.transcribe import ModelHolder
+        ModelHolder.model = None; ModelHolder.model_path = None
+    except Exception: pass
+    import gc; gc.collect(); _mlx_release()
 
 def warmup():
     rng = np.random.default_rng(0)
-    for secs in (2, 4):
-        transcribe_whisper((rng.normal(0, 800, 16000 * secs)).astype(np.int16).tobytes())
+    if _whisper_primary():   # only keep whisper resident when it is the main STT
+        for secs in (2, 4):
+            transcribe_whisper((rng.normal(0, 800, 16000 * secs)).astype(np.int16).tobytes())
     tts("Ready.")   # loads Kokoro + misaki/spaCy once (first call ~30 s cold)
 
 # ---------- router (router.py / lists.py; importable without MLX) ----------
@@ -129,6 +154,7 @@ def synthesize(text: str):
             _kokoro = _kokoro or load_model("prince-canuma/Kokoro-82M")
             chunks = [np.asarray(r.audio).reshape(-1) for r in _kokoro.generate(text=text, voice="af_heart", speed=1.0)]
             audio = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
+            _mlx_release()
             tts.last_engine = "kokoro"
             return _resample(audio, 24000, 48000), 48000
         except Exception as e:
