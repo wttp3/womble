@@ -86,6 +86,9 @@ class Memory:
         now = self.clock()
         rec = self._live(key)
         if rec is None:
+            # Alexa keys are one per session id, so expired ones would otherwise never be looked up again.
+            for k in [k for k, r in self._store.items() if now - r["ts"] > self.ttl]:
+                self._store.pop(k, None)
             rec = {"ts": now, "items": []}
             self._store[key] = rec
         rec["items"].append({"role": role, "content": content})
