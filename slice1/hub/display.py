@@ -9,6 +9,7 @@ import asyncio, json, logging, os, re, time, uuid
 from collections import OrderedDict, deque
 from pathlib import Path
 from aiohttp import web, ClientSession, ClientTimeout
+import memlog
 
 log = logging.getLogger("display")
 STATIC = Path(__file__).resolve().parent / "static"
@@ -85,6 +86,7 @@ PING_EVERY_S = 30          # frame marks Stale after 90 s without any message (R
 HUB_VERSION = "2.6"         # answered to the frame's hello; shown in its diagnostics toast
 STATS_WINDOW = 200
 STATS_LOG_EVERY = 25
+TAPS_KEEP = 200
 
 
 def pct(xs, p):
@@ -213,7 +215,7 @@ class Display:
         self.last_reply = None            # full text kept for "print that"
         self.voice_stop_handler = None    # async fn() to stop TTS on voice.stop; None = frame-only stop
         self.media_handler = None         # async fn(action) -> str|None ; set by hub when MA plugin exists
-        self.taps: list[dict] = []
+        self.taps: deque = deque(maxlen=TAPS_KEEP)   # GET /api/taps; bounded so a long-running hub doesn't grow
         self.tap_hooks: list = []          # async fn(action) called for every tap (recorder)
         self.snapshot_extra: dict = {}     # key -> fn() merged into snapshot data
         self.allowed_origins = None        # None = no Origin check (standalone). set of strings otherwise
@@ -324,9 +326,12 @@ class Display:
             log.info("ws rejected origin %r", origin)
             raise web.HTTPForbidden()
         ws = web.WebSocketResponse(heartbeat=20); await ws.prepare(request); self.clients.add(ws)
-        snap = await self.snapshot()
-        self.paint.on_send(snap["id"], "snapshot", snap["ts"] * 1000)
-        await ws.send_str(json.dumps(snap))
+        with memlog.event("ws.snapshot") as ev:
+            snap = await self.snapshot()
+            self.paint.on_send(snap["id"], "snapshot", snap["ts"] * 1000)
+            body = json.dumps(snap)
+            await ws.send_str(body)
+            ev.note(bytes=len(body), clients=len(self.clients))
         pinger = asyncio.create_task(self._ping_loop(ws))
         if self.boot_note:
             note = {"v": 1, "event": "toast", "id": uuid.uuid4().hex, "corr": None, "ts": time.time(),
@@ -389,7 +394,7 @@ class Display:
         return web.json_response({"ok": True, "clients": len(self.clients)})
 
     async def api_taps(self, request):
-        return web.json_response(self.taps)
+        return web.json_response(list(self.taps))
 
     def add_routes(self, app: web.Application):
         app.router.add_get("/", lambda r: web.FileResponse(STATIC / "display.html"))

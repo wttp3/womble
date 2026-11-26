@@ -45,13 +45,20 @@ def parse_duration(v) -> int:
         return 0
 
 
+STEP = 64 * 1024
+
+
 def parse_items(xml: bytes, limit=MAX_ITEMS) -> list:
     """First `limit` items as dicts. Stops parsing once enough items are read."""
+    return parse_chunks((xml[i:i + STEP] for i in range(0, len(xml), STEP)), limit)
+
+
+def parse_chunks(chunks, limit=MAX_ITEMS) -> list:
+    """parse_items over an iterable of byte chunks; stops pulling chunks once `limit` items are read."""
     items = []
     parser = ET.XMLPullParser(events=("end",))
-    step = 64 * 1024
-    for i in range(0, len(xml), step):
-        parser.feed(xml[i:i + step])
+    for chunk in chunks:
+        parser.feed(chunk)
         for _, el in parser.read_events():
             if el.tag != "item":
                 continue
@@ -103,10 +110,29 @@ def _http_get(url: str) -> bytes:
         return r.read(MAX_BYTES)
 
 
+def _http_items(url: str, limit=MAX_ITEMS) -> list:
+    """Parse the feed while it downloads and stop after `limit` items.
+
+    A long-running podcast feed is several MB with the newest episodes first; reading it all
+    just to keep 30 items was an 8 MB allocation per feed every 15 minutes.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=15) as r:   # follows redirects
+        def chunks():
+            got = 0
+            while got < MAX_BYTES:
+                c = r.read(min(STEP, MAX_BYTES - got))
+                if not c:
+                    return
+                got += len(c)
+                yield c
+        return parse_chunks(chunks(), limit)
+
+
 class Resolver:
     def __init__(self, library, fetch=None, cache_s=CACHE_S, clock=time.monotonic):
         self.lib = library
-        self.fetch = fetch or _http_get     # sync callable(url) -> bytes; tests pass fixtures
+        self.fetch = fetch                  # sync callable(url) -> bytes (tests pass fixtures); None streams over HTTP
         self.cache_s = cache_s
         self.clock = clock
         self._cache = {}                    # feed -> (t, items)
@@ -115,7 +141,9 @@ class Resolver:
         hit = self._cache.get(feed)
         if hit and self.clock() - hit[0] < self.cache_s:
             return hit[1]
-        items = parse_items(self.fetch(feed))
+        items = parse_items(self.fetch(feed)) if self.fetch else _http_items(feed)
+        for f in [f for f, (t, _) in self._cache.items() if self.clock() - t >= self.cache_s]:
+            self._cache.pop(f, None)        # feeds of removed entries don't stay cached for ever
         self._cache[feed] = (self.clock(), items)
         return items
 
