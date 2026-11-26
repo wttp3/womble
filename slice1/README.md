@@ -63,6 +63,47 @@ It is the documented path ESPHome voice firmware uses (the same events HA's esph
 4. Flash: `esphome run firmware/box3-hub.yaml --device <box3-ip>` (OTA). Keep the current YAML/firmware as a rollback.
 5. `./run.sh`, open `http://<petit-ip>:8080/` on the frame, say "Okay Nabu, add eggs to the shopping list".
 
+## Speech models and memory
+
+The hub process imports no ML library. Kokoro and whisper each run in a child process (`hub/ml_worker.py`, started by `hub/ml_client.py`) that starts on demand and exits when idle, which is what gives the memory back. Nothing is loaded at startup unless `ML_WARM_AT_START=1`.
+
+`TTS_ENGINE` picks the voice. It is read once, at import, in `hub/hub.py` (`TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro")`). Under launchd the environment comes from the untracked `local.env` at the repo root, which `hub/launch.sh` and `run.sh` both source with `set -a`. So put `TTS_ENGINE=elevenlabs` in `local.env` and restart the hub; nothing is committed.
+
+| `TTS_ENGINE` | Order | Wake word |
+|---|---|---|
+| `kokoro` (default) | Kokoro worker → `say` | Kokoro starts loading, so the load overlaps listening and STT |
+| `elevenlabs` | ElevenLabs → Kokoro worker → `say` | Nothing local starts. Kokoro is only started by a fallback |
+| `say` | macOS `say` | Nothing |
+
+ElevenLabs (`hub/tts_eleven.py`) is a streaming `POST /v1/text-to-speech/{voice_id}/stream?output_format=pcm_24000`. The 24 kHz PCM goes through the same resample to a 48 kHz mono WAV with a 200 ms tail, the same `/tts/` URL and the same first-sentence join as Kokoro. The key is its own Keychain item (the command prompts for the secret):
+
+```
+security add-generic-password -a "$USER" -s womble-elevenlabs -U -w
+```
+
+On 401, 402, 403 or 404 the hub falls back and leaves ElevenLabs alone for `ELEVENLABS_COOLDOWN_S`. A 429 is retried once. 5xx, a timeout or a network error fall back for that reply only. The log line carries the status and ElevenLabs' error code, never the response text or the key.
+
+| Env | Default | |
+|---|---|---|
+| `TTS_ENGINE` | `kokoro` | `elevenlabs`, `kokoro` or `say`. |
+| `ELEVENLABS_VOICE_ID` | `rhS7yjXTU4uIlRxXhNW7` | Charlotte, a public library voice. |
+| `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | `model_id`. |
+| `ELEVENLABS_TEXT_NORMALIZATION` | `on` | `apply_text_normalization`. If the API refuses it (400/422), the hub retries without it and stops sending it until restart. |
+| `ELEVENLABS_CONNECT_TIMEOUT_S` / `ELEVENLABS_TIMEOUT_S` | `3` / `15` | Connect and whole-request limits. |
+| `ELEVENLABS_COOLDOWN_S` | `600` | Pause after an auth or credit error. |
+| `TTS_IDLE_UNLOAD_S` / `STT_IDLE_UNLOAD_S` | `300` / same | A model worker exits after this long unused. `0` keeps it. |
+| `ML_PREWARM_ON_WAKE` | `1` | Start loading at the wake word (`kokoro`, and whisper when `STT_ENGINE=whisper`). |
+| `ML_WARM_AT_START` | `0` | `1` loads at startup as before. Never loads Kokoro when `TTS_ENGINE=elevenlabs`. |
+| `ML_WORKER` | `1` | `0` runs the models inside the hub process. |
+| `ML_TIMEOUT_S` | `120` | Limit for one model call, cold load included. |
+| `ML_HF_OFFLINE` | `1` | Start a worker with `HF_HUB_OFFLINE=1` when its model is already in the Hugging Face cache. If that load fails it is retried once with network access. |
+| `TTS_CHUNK_CHARS` | `200` | Longest text per Kokoro run. Longer replies are split at sentence ends (then commas, then words) and the MLX cache is cleared between pieces. `0` disables. |
+| `MLX_CACHE_MB` / `MLX_MEMORY_LIMIT_MB` | `128` / unset | MLX buffer cache cap and optional `mx.set_memory_limit`, set in the worker. |
+| `TTS_KEEP_S` | `86400` | Reply WAVs in `data/tts` older than this are deleted. `0` keeps them. |
+| `MEM_LOG` / `MEM_LOG_EVERY_S` / `MEM_LOG_SAMPLE_S` | `0` / `300` / `0.2` | `mem ev=…` lines per subsystem event (before, after, peak for the hub and each worker) and a `mem idle` line. |
+
+`hub/mem_check.py` runs load/unload cycles with the real models and prints cold-load time, footprint and peak. `tests/test_ml_worker.py` and `tests/test_tts_eleven.py` are the offline versions (stand-in models, fake local HTTP server).
+
 ## Smoke test results (petit, M2 16 GB, 2026-10-15)
 `hub/smoke.py` (say → 16 kHz WAV → mlx-whisper → router → Kokoro); 1.2–2.1 s clips, warm:
 | model | lang | STT ms | Kokoro TTS ms |
@@ -71,7 +112,7 @@ It is the documented path ESPHome voice firmware uses (the same events HA's esph
 | whisper-large-v3-turbo | en | ~1,020–1,070 | 260–300 |
 | turbo-q4 | auto | ~2,000 | 230–380 |
 | turbo-q4 | en | ~1,020–1,050 | 240–290 |
-Cold load: whisper 5–14 s, Kokoro first call ~29 s (spaCy model download, once). The hub warms both at startup.
+Cold load: whisper 5–14 s, Kokoro first call ~29 s (spaCy model download, once). The hub no longer warms either at startup (see Speech models and memory).
 All transcripts were correct; router categories correct. Note: TTS-generated test audio is cleaner than a real kitchen mic.
 
 ## Media library (media phase 1, M1)

@@ -60,6 +60,9 @@ flowchart LR
 * **Files:**
   * `hub.py`: STT, router, TTS, `Session` VAD, BOX-3 reconnect loop, web app.
   * `stt_xai.py`
+  * `tts_eleven.py`: ElevenLabs streaming TTS.
+  * `ml_worker.py`, `ml_client.py`: Kokoro and whisper in on-demand child processes.
+  * `memlog.py`, `mem_check.py`: opt-in memory logging and a load/unload check for the Mac.
   * `alexa_pull.py`
   * `alexa_link.py`: outbound WebSocket to the worker. Off unless `ALEXA_LINK=1`.
   * `display.py`
@@ -80,7 +83,16 @@ flowchart LR
 | WHISPER_MODEL / WHISPER_LANG | turbo / en | local STT |
 | STT_ENGINE | xai | `whisper` forces local STT |
 | XAI_STT_TIMEOUT | 5 | seconds |
-| TTS_ENGINE | kokoro | `say` forces macOS say |
+| TTS_ENGINE | kokoro | `elevenlabs` = ElevenLabs, then Kokoro, then say. `say` forces macOS say. Read at import in `hub.py`; set it in `local.env`. |
+| ELEVENLABS_VOICE_ID / ELEVENLABS_MODEL | `rhS7yjXTU4uIlRxXhNW7` (Charlotte) / `eleven_flash_v2_5` | ElevenLabs voice and model |
+| ELEVENLABS_TEXT_NORMALIZATION | on | `apply_text_normalization`; dropped until restart if the API refuses it |
+| ELEVENLABS_CONNECT_TIMEOUT_S / ELEVENLABS_TIMEOUT_S / ELEVENLABS_COOLDOWN_S | 3 / 15 / 600 | timeouts; pause after 401/402/403/404 |
+| TTS_IDLE_UNLOAD_S / STT_IDLE_UNLOAD_S | 300 / same | model worker exits after this long unused; 0 keeps it |
+| ML_PREWARM_ON_WAKE / ML_WARM_AT_START / ML_WORKER | 1 / 0 / 1 | load at the wake word / at startup / in a child process |
+| ML_TIMEOUT_S / ML_HF_OFFLINE | 120 / 1 | one model call limit / `HF_HUB_OFFLINE=1` for a worker whose model is cached |
+| TTS_CHUNK_CHARS / MLX_CACHE_MB / MLX_MEMORY_LIMIT_MB | 200 / 128 / unset | Kokoro piece size and MLX limits (worker) |
+| TTS_KEEP_S | 86400 | delete reply WAVs older than this; 0 keeps them |
+| MEM_LOG / MEM_LOG_EVERY_S / MEM_LOG_SAMPLE_S | 0 / 300 / 0.2 | memory logging (`memlog.py`) |
 | ALEXA_PULL | 1 | `0` disables the puller |
 | ALEXA_LINK | 0 | `1` opens the outbound hub socket |
 | ALEXA_WORKER_URL | unset | `wss://<worker-host>/hub` |
@@ -108,8 +120,12 @@ flowchart LR
   * Anything else → `fallback`, which says "Sorry, I can only do lists for now."
 * **Lists file** `data/lists.json`**:** `{"<list>": [{"item": str, "ts": epoch_float}]}`. It is written in full on every add. There is no lock, and there is no remove/clear voice command.
 * **Done-list archive** `data/lists_done.json`**:** `[{list, done_ts, items}]`. On 2026-10-17 the old shopping list (11 items) was archived here and cleared by hand at Andrew's request, so Frida could start a fresh list. After any hand edit, refresh the frame with `POST /api/event` `list.updated` (§5).
-* **TTS:** mlx-audio Kokoro `prince-canuma/Kokoro-82M`, voice `af_heart`. Output is resampled to 48 kHz mono WAV with a 200 ms tail and saved as `data/tts/<uuid>.wav`. Nothing deletes these files **\[cleanup: none found\]**. If Kokoro fails, macOS `say` is used.
-* **Warmup:** whisper and Kokoro load at startup. A cold Kokoro start takes about 30 s.
+* **TTS (**`synthesize()` **in [hub.py](<http://hub.py>)):** the engine is `TTS_ENGINE`. Every engine's output is resampled to a 48 kHz mono WAV with a 200 ms tail and saved as `data/tts/<uuid>.wav`. Files older than `TTS_KEEP_S` (one day) are deleted.
+  * `kokoro` (code default): mlx-audio Kokoro `prince-canuma/Kokoro-82M`, voice `af_heart`, in the `tts` worker process. If it fails, macOS `say`.
+  * `elevenlabs` (`tts_eleven.py`): streaming `POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=pcm_24000` with `model_id` and `apply_text_normalization`, over aiohttp. Key from Keychain `womble-elevenlabs` (account `$USER`), cached in memory, never logged, and not passed to the worker processes. On 401/402/403/404 it falls back and is skipped for `ELEVENLABS_COOLDOWN_S`; a 429 is retried once; 5xx, timeout or network error fall back for that reply. Fallback order is Kokoro worker, then `say`. Only the status and ElevenLabs' error code are logged.
+  * `say`: macOS `say` only.
+* **Model workers (**`ml_worker.py`**,** `ml_client.py`**):** the hub process imports no ML library. Kokoro and whisper each run in a child process that is started on demand and exits after `TTS_IDLE_UNLOAD_S` / `STT_IDLE_UNLOAD_S`; a whisper fallback's process exits as soon as the transcript is back. A worker whose model is already in the Hugging Face cache is started with `HF_HUB_OFFLINE=1`. Replies longer than `TTS_CHUNK_CHARS` are synthesised in pieces with the MLX cache cleared between them.
+* **Warmup:** none at startup unless `ML_WARM_AT_START=1`. With `TTS_ENGINE=kokoro` the wake word starts the Kokoro load in the background. With `TTS_ENGINE=elevenlabs` nothing local is loaded at the wake word or at startup; Kokoro starts only on a fallback. A first-ever Kokoro start takes about 30 s (downloads).
 * **VAD constants:** onset at 3× the noise floor (minimum 60 RMS). End of speech is 0.65 s of silence relative to 15 % of the peak. Gives up after 5 s with no speech; maximum utterance 10 s.
 * **BOX-3 link:** `APIClient(BOX3_HOST, 6053, noise_psk)` in an explicit reconnect loop (retries every 5 s). It mirrors device log lines that match WAKE/micro_wake/voice_assistant/\[W\]/\[E\] into hub.log under the `box3` logger.
 * **HTTP (port 8080, 0.0.0.0):**
@@ -128,11 +144,13 @@ flowchart LR
 * **Restart:** `launchctl kickstart -k gui/$(id -u)/com.andrew.box3hub`. Check it with `tail -f ~/box3-voice/slice1/hub.log`. Look for "connected to BOX-3, voice assistant subscribed" and "alexa pull running".
 * **Tests:** run each one directly from `slice1/hub/` with `.venv/bin/python tests/<file>.py` (no pytest):
   * `test_stt_xai.py`: mocked HTTP.
+  * `test_ml_worker.py`: model worker load/unload cycles with stand-in models.
+  * `test_tts_eleven.py`: ElevenLabs path against a fake local HTTP server.
   * `test_alexa_pull.py`: offline, no Keychain.
   * `test_recorder.py`: fake device.
   * `fake_driver.py`: needs playwright + Chromium and takes display screenshots.
   * Also in `data/`: `live_stt_test.py` (live, uses the key) and `smoke.jsonl`.
-* **Known issues:** TTS files pile up. (`lists.json` writes are atomic: temp file, fsync, `os.replace`.) The BOX-3 log shows "display took a long time" warnings (harmless). The Echo speaks a live answer only while the hub socket is up; otherwise it still says "On it." The worker's own model fallback is not built.
+* **Known issues:** (`lists.json` writes are atomic: temp file, fsync, `os.replace`.) The BOX-3 log shows "display took a long time" warnings (harmless). The Echo speaks a live answer only while the hub socket is up; otherwise it still says "On it." The worker's own model fallback is not built.
 * **Boundary:** the hub owns the lists and the router. Home Assistant and announce-bridge work belong to other bots.
 
 ### 2.2 Display service and frame page (`slice1/hub/display.py`, `static/display.html`, spec `DISPLAY.md`)
@@ -273,6 +291,7 @@ flowchart LR
 | -- | -- | -- |
 | `box3-api-key` (account `hub`) | macOS Keychain on petit | [run.sh](<http://run.sh>) → BOX3_NOISE_PSK |
 | `womble-xai` (account `decoy`) | Keychain | stt_xai.py |
+| `womble-elevenlabs` (account `$USER`) | Keychain | tts_eleven.py |
 | `womble-cf-queue` (account `decoy`) | Keychain. CF API token with Account·Queues·Edit | alexa_pull.py |
 | `ALEXA_SKILL_ID` | Cloudflare Worker secret | Worker |
 | wifi_ssid, wifi_password, api_key, ota_password | `slice1/firmware/secrets.yaml` (gitignored) | ESPHome build |
@@ -283,7 +302,7 @@ Never print, copy or commit these. To check a Keychain item without reading its 
 
 ## 5. Operations runbook
 
-1. **Restart the hub:** `launchctl kickstart -k gui/$(id -u)/com.andrew.box3hub`, then `tail -f ~/box3-voice/slice1/hub.log`. Wait about 15 s for warmup.
+1. **Restart the hub:** `launchctl kickstart -k gui/$(id -u)/com.andrew.box3hub`, then `tail -f ~/box3-voice/slice1/hub.log`. There is no model warmup at startup.
 2. **Refresh the frame:**
    * The page reconnects on its own every 2 s.
    * After a hand edit of lists, push it: `curl -X POST localhost:8080/api/event -d '{"event":"list.updated","data":{"list":"shopping","action":"show","items":[...],"highlight":[]}}'` (localhost only).
