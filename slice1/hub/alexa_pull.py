@@ -11,6 +11,7 @@ Standalone check:  .venv/bin/python alexa_pull.py --status | --once
 import asyncio, base64, collections, inspect, json, logging, os, random, subprocess, time
 from pathlib import Path
 from aiohttp import ClientSession, ClientTimeout
+import memlog
 
 log = logging.getLogger("alexa")
 # Cloudflare account + queue ids come from the environment (local.env, untracked); no built-in default.
@@ -198,7 +199,9 @@ class AlexaPuller:
                     backoff = 0.0
                     if msgs:
                         self.last_msg = time.time()
-                        acks, retries = await self.handle_batch(msgs)
+                        with memlog.event("alexa.pull.batch") as ev:
+                            acks, retries = await self.handle_batch(msgs)
+                            ev.note(msgs=len(msgs))
                         if acks or retries:
                             await self._post(s, token, "ack", {"acks": acks, "retries": retries})
                     if self.missed: await self._flush_missed()

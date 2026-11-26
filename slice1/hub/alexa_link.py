@@ -8,11 +8,12 @@ womble-hub-link (account $USER), read the same way as the brain key.
 ALEXA_LINK_TEST_DELAY_S delays each answer so the worker's progressive response
 and 6.5 s cutoff can be exercised. It is off unless set.
 """
-import asyncio, contextlib, inspect, json, logging, os, random, re, subprocess, time
+import asyncio, collections, contextlib, inspect, json, logging, os, random, re, subprocess, time
 from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType
 
+import memlog
 from alexa_pull import (
     Devices, Seen, claim_recent, session_key, show_alexa_result,
 )
@@ -22,6 +23,7 @@ KC_SERVICE = "womble-hub-link"
 TOKEN_RETRY_S = 5 * 60
 HEARTBEAT_S = 15
 MAX_SPEECH = 6000
+ANSWERS_KEEP = 200     # replies kept for a redelivered job id
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
@@ -127,7 +129,7 @@ class AlexaLink:
         self.heartbeat_s = HEARTBEAT_S
         self.token_retry = TOKEN_RETRY_S
         self.jitter = True
-        self._answers = {}
+        self._answers = collections.OrderedDict()
         self.ws = None
         self.media = None          # media.service.MediaService, set by the hub (M3)
 
@@ -263,6 +265,8 @@ class AlexaLink:
         reply = build_reply(job, res)
         if rid:
             self._answers[rid] = reply
+            while len(self._answers) > ANSWERS_KEEP:
+                self._answers.popitem(last=False)
         hop_ms = max(0, int((time.perf_counter() - recv) * 1000 - model_ms - int(delay * 1000)))
         log.info("alexa link hop_ms=%d model_ms=%d", hop_ms, model_ms)
         self._log_job(job, text, session, reply)
@@ -281,7 +285,8 @@ class AlexaLink:
         if not isinstance(job, dict) or not (job.get("id") or job.get("requestId")):
             return
         try:
-            reply = await self.handle_job(job)
+            with memlog.event("alexa.link.job"):
+                reply = await self.handle_job(job)
         except Exception as e:
             log.warning("alexa link job failed (%s)", type(e).__name__)
             reply = {"id": job.get("id") or job.get("requestId"), "speech": "Connection unavailable.",

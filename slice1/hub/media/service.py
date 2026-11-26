@@ -16,6 +16,8 @@ worker only ever sees a 16-hex hash.
 import asyncio, hashlib, logging, re, subprocess, time
 from pathlib import Path
 
+import memlog
+
 log = logging.getLogger("hub.media")
 KITCHEN = "kitchen"
 PENDING_TTL_S = 60
@@ -227,12 +229,14 @@ class MediaService:
         """15-minute latest-episode precompute, pushed with the library snapshot."""
         while True:
             latest = None
-            if self.resolver is not None:
-                try:
-                    latest = await self.resolver.refresh_all_async()
-                except Exception as e:
-                    log.warning("media refresh failed (%s)", type(e).__name__)
-            await self.push_snapshot(latest)
+            with memlog.event("media.refresh") as ev:
+                if self.resolver is not None:
+                    try:
+                        latest = await self.resolver.refresh_all_async()
+                    except Exception as e:
+                        log.warning("media refresh failed (%s)", type(e).__name__)
+                await self.push_snapshot(latest)
+                ev.note(feeds=len(latest or {}))
             await asyncio.sleep(every_s)
 
 
@@ -500,12 +504,12 @@ async def finish_episode(self, room, st):
 
 def episode_duration(self, entry_id, key):
     """Seconds for an episode: feed itunes:duration, else ffprobe on the enclosure. 0 if unknown."""
-    from .resolver import ep_key as _ek, parse_items, _http_get
+    from .resolver import ep_key as _ek, _http_items
     entry = self.lib.get(entry_id) if entry_id else None
     feed = next((m.get("feed") for m in (entry or {}).get("methods", []) if m.get("kind") == "podcast_rss_latest"), None)
     if not feed:
         return 0
-    items = self.resolver._items(feed) if self.resolver is not None else parse_items(_http_get(feed))
+    items = self.resolver._items(feed) if self.resolver is not None else _http_items(feed)
     it = next((i for i in items if i.get("url") and _ek(i.get("guid"), i["url"]) == key), None)
     if not it:
         return 0

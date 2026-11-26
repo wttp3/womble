@@ -1,15 +1,17 @@
 """petit voice hub, slice 1.
-BOX-3 (ESPHome voice_assistant over native API) -> mlx-whisper -> rule router
+BOX-3 (ESPHome voice_assistant over native API) -> STT (xAI, fallback mlx-whisper) -> rule router
 -> local JSON list, or the brain when the router falls through
 -> TTS (Kokoro/mlx-audio, fallback macOS `say`) -> BOX-3 media player
 + WebSocket card to display page.  Secrets come from the environment only.
 
 Env: BOX3_HOST (required, BOX-3 address), BOX3_NOISE_PSK (api encryption key), HUB_HOST_IP (petit LAN IP
 the BOX-3 can reach), HUB_PORT (8080), WHISPER_MODEL, TTS_ENGINE (kokoro|say).
+Memory: Kokoro and whisper run in ml_worker.py child processes that start on demand and exit when idle
+(TTS_IDLE_UNLOAD_S, STT_IDLE_UNLOAD_S, ML_WORKER, ML_WARM_AT_START, ML_PREWARM_ON_WAKE, MEM_LOG; see ml_client.py and memlog.py).
 NOTE: the aioesphomeapi voice-assistant API names below match how Home Assistant's esphome
 integration uses them; check them against the installed aioesphomeapi version (see README).
 """
-import asyncio, json, logging, os, subprocess, tempfile, time, uuid, wave
+import asyncio, json, logging, os, re, subprocess, tempfile, time, uuid, wave
 from pathlib import Path
 
 import numpy as np
@@ -36,27 +38,33 @@ TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro")
 
 log = logging.getLogger("hub")
 
-# ---------- STT ----------
-import mlx_whisper
-try:
-    import mlx.core as _mx
-    _mx.set_cache_limit(int(os.environ.get("MLX_CACHE_MB", "256")) * 1024 * 1024)  # cap MLX's Metal buffer cache
-except Exception:
-    _mx = None
-def _mlx_release():
-    """Drop cached Metal buffers after each STT/TTS run so GPU memory doesn't grow."""
-    if _mx is not None:
-        try: _mx.clear_cache()
-        except Exception: pass
+# ---------- local models (ml_worker.py child processes; nothing ML is imported in this process) ----------
+import memlog, ml_client
+TTS_IDLE_S = float(os.environ.get("TTS_IDLE_UNLOAD_S", "300"))      # Kokoro worker exits after this long unused; 0 = stay loaded
+STT_IDLE_S = float(os.environ.get("STT_IDLE_UNLOAD_S", str(TTS_IDLE_S)))   # same for whisper when STT_ENGINE=whisper
+ML_TIMEOUT_S = float(os.environ.get("ML_TIMEOUT_S", "120"))         # one model call, cold load included
+ML_TTS = ml_client.make("tts", idle_s=TTS_IDLE_S, timeout=ML_TIMEOUT_S)
+ML_STT = ml_client.make("stt", idle_s=STT_IDLE_S, timeout=ML_TIMEOUT_S)
+memlog.watch_pid("tts", ML_TTS.pid); memlog.watch_pid("stt", ML_STT.pid)
 
+def _whisper_args() -> dict:
+    return {"model": WHISPER_MODEL, "lang": os.environ.get("WHISPER_LANG") or None}
+
+def prewarm_models():
+    """Wake word heard: start loading what the reply will need, so the load overlaps listening and STT."""
+    if os.environ.get("ML_PREWARM_ON_WAKE", "1") == "0": return
+    try:
+        if TTS_ENGINE == "kokoro": ML_TTS.prewarm("tts")
+        if _whisper_primary(): ML_STT.prewarm("stt", **_whisper_args())
+    except Exception as e:
+        log.warning("prewarm failed (%s)", type(e).__name__)
+
+# ---------- STT ----------
 def transcribe_whisper(pcm: bytes) -> str:
-    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-    if 0 < peak < 0.5: audio = audio * min(0.5 / peak, 20.0)   # software gain for quiet mic
-    r = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER_MODEL, language=os.environ.get("WHISPER_LANG") or None,
-                               condition_on_previous_text=False, temperature=0.0)
-    _mlx_release()
-    return r.get("text", "").strip()
+    with memlog.event("stt.whisper") as ev:
+        hdr, _ = ML_STT.request("stt", _whisper_args(), pcm)
+        ev.note(**(hdr.get("mem") or {}))
+    return (hdr.get("text") or "").strip()
 
 import stt_xai
 def transcribe(pcm: bytes) -> str:
@@ -66,34 +74,33 @@ def transcribe(pcm: bytes) -> str:
         key = stt_xai.get_key()
         if key:
             try:
-                text = stt_xai.transcribe_xai(pcm, key)
+                with memlog.event("stt.xai"):
+                    text = stt_xai.transcribe_xai(pcm, key)
                 log.info("stt engine=xai latency=%.0fms", (time.perf_counter() - t0) * 1000)
                 return text
             except Exception as e:
                 reason = type(e).__name__ if not isinstance(e, RuntimeError) else str(e)
                 log.warning("xai stt failed (%s); falling back to whisper", reason)
-    t1 = time.perf_counter(); text = transcribe_whisper(pcm)
+    t1 = time.perf_counter()
+    try:
+        text = transcribe_whisper(pcm)
+    finally:
+        if not _whisper_primary(): _whisper_unload()
     log.info("stt engine=whisper%s latency=%.0fms", " (fallback)" if reason else "", (time.perf_counter() - t1) * 1000)
-    if not _whisper_primary(): _whisper_unload()
     return text
 
 def _whisper_primary() -> bool:
     return os.environ.get("STT_ENGINE", "xai").lower() == "whisper"
 
 def _whisper_unload():
-    """xAI is the main STT, so the ~1.6 GB whisper model is loaded only for a fallback and then dropped."""
-    try:
-        from mlx_whisper.transcribe import ModelHolder
-        ModelHolder.model = None; ModelHolder.model_path = None
-    except Exception: pass
-    import gc; gc.collect(); _mlx_release()
+    """xAI is the main STT, so the ~1.6 GB whisper model is loaded only for a fallback. Its process exits straight after."""
+    ML_STT.stop("fallback done")
 
 def warmup():
-    rng = np.random.default_rng(0)
-    if _whisper_primary():   # only keep whisper resident when it is the main STT
-        for secs in (2, 4):
-            transcribe_whisper((rng.normal(0, 800, 16000 * secs)).astype(np.int16).tobytes())
-    tts("Ready.")   # loads Kokoro + misaki/spaCy once (first call ~30 s cold)
+    """Load the models now. Not run at startup unless ML_WARM_AT_START=1; smoke.py and test_session.py call it."""
+    if _whisper_primary():   # only keep whisper around when it is the main STT
+        ML_STT.request("warm", {"what": ["stt"], **_whisper_args()})
+    tts("Ready.")   # loads Kokoro + misaki/spaCy (first ever call ~30 s cold)
 
 # ---------- router (router.py / lists.py; importable without MLX) ----------
 LISTS = ListStore(LIST_FILE)
@@ -144,19 +151,16 @@ async def route(text: str, *, source: str = "box3-kitchen", session: str | None 
             "llm_ttft_ms": reply.llm_ttft_ms, "llm_total_ms": reply.llm_total_ms}
 
 # ---------- TTS ----------
-_kokoro = None
 def synthesize(text: str):
     """Float32 mono audio at 48 kHz, plus the sample rate. Sets tts.last_engine."""
     if TTS_ENGINE == "kokoro":
         try:
-            global _kokoro
-            from mlx_audio.tts.utils import load_model   # API: verify against installed mlx-audio
-            _kokoro = _kokoro or load_model("prince-canuma/Kokoro-82M")
-            chunks = [np.asarray(r.audio).reshape(-1) for r in _kokoro.generate(text=text, voice="af_heart", speed=1.0)]
-            audio = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
-            _mlx_release()
+            with memlog.event("tts") as ev:
+                hdr, raw = ML_TTS.request("tts", {"text": text})
+                ev.note(chars=len(text), **(hdr.get("mem") or {}))
+            audio = np.frombuffer(raw, dtype=np.float32)
             tts.last_engine = "kokoro"
-            return _resample(audio, 24000, 48000), 48000
+            return _resample(audio, int(hdr.get("sr") or 24000), 48000), 48000
         except Exception as e:
             log.warning("kokoro failed (%s), falling back to say", e)
     tts.last_engine = "say"
@@ -167,10 +171,29 @@ def synthesize(text: str):
     aiff.unlink(missing_ok=True)
     return _resample(audio[:, 0], sr, 48000), 48000
 
+TTS_KEEP_S = float(os.environ.get("TTS_KEEP_S", "86400"))   # spoken WAVs older than this are deleted; 0 keeps them all
+_TTS_NAME = re.compile(r"^[0-9a-f]{32}\.(wav|aiff)$")
+_tts_pruned_at = 0.0
+def _prune_tts(now: float | None = None) -> int:
+    """Delete old reply audio from data/tts (nothing else did). Checked at most every 10 minutes."""
+    global _tts_pruned_at
+    now = now or time.time()
+    if TTS_KEEP_S <= 0 or now - _tts_pruned_at < 600: return 0
+    _tts_pruned_at = now; n = 0
+    try:
+        for f in TTS_DIR.iterdir():
+            if _TTS_NAME.match(f.name) and now - f.stat().st_mtime > TTS_KEEP_S:
+                f.unlink(missing_ok=True); n += 1
+    except OSError as e:
+        log.warning("tts prune failed (%s)", type(e).__name__)
+    if n: log.info("tts prune removed %d old files", n)
+    return n
+
 def tts(text: str) -> Path:
     audio, sr = synthesize(text)
     out = TTS_DIR / f"{uuid.uuid4().hex}.wav"
     _write_wav(out, audio, sr)
+    _prune_tts()
     return out
 
 def tts_parts(parts, sr=48000) -> Path:
@@ -178,6 +201,7 @@ def tts_parts(parts, sr=48000) -> Path:
     audio = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
     out = TTS_DIR / f"{uuid.uuid4().hex}.wav"
     _write_wav(out, audio, sr)
+    _prune_tts()
     return out
 
 def _write_wav(p, audio, sr):
@@ -278,6 +302,7 @@ class Session:
         self.t = {"wake": time.perf_counter(), "wake_word": wake_word_phrase}
         self.speech_start = None; self.last_voice = None; self.peak = 0.0; self.sm = []; self.rms_log = []; self.chunk_sizes = set()
         log.info("run start wake=%s settings=%s", wake_word_phrase, audio_settings)
+        prewarm_models()
         asyncio.ensure_future(disp.emit("voice.listening", {"wake_word": wake_word_phrase, "source": "box3-kitchen"}))
         self.c.send_voice_assistant_event(EV.VOICE_ASSISTANT_RUN_START, None)
         self.c.send_voice_assistant_event(EV.VOICE_ASSISTANT_STT_START, None)
@@ -416,8 +441,8 @@ class Session:
 
 # ---------- web ----------
 async def _warm():
-    """Load whisper + Kokoro off the event loop. The site and Alexa puller are already up."""
-    log.info("warming whisper…")
+    """ML_WARM_AT_START=1 only: load the models off the event loop. The site and Alexa puller are already up."""
+    log.info("warming models…")
     try:
         await asyncio.to_thread(warmup)
         log.info("warmup done")
@@ -430,7 +455,15 @@ async def _warm():
 async def main():
     global models_ready
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    models_ready = asyncio.Event(); disp.boot_note = "Warming up…"
+    models_ready = asyncio.Event()
+    warm_at_start = os.environ.get("ML_WARM_AT_START", "0") == "1"
+    if warm_at_start: disp.boot_note = "Warming up…"
+    else: models_ready.set()   # models load at the first wake word instead (see prewarm_models)
+    log.info("models: tts=%s idle_unload=%.0fs stt=%s worker=%s warm_at_start=%s", TTS_ENGINE, TTS_IDLE_S,
+             "whisper" if _whisper_primary() else "xai", os.environ.get("ML_WORKER", "1") != "0", warm_at_start)
+    memlog.gauge("ws_clients", lambda: len(disp.clients)); memlog.gauge("taps", lambda: len(disp.taps))
+    memlog.gauge("brain_sessions", lambda: len(BRAIN.memory._store)); memlog.gauge("tasks", lambda: len(asyncio.all_tasks()))
+    _BG_TASKS.append(asyncio.create_task(memlog.periodic()))
     app = web.Application()
     disp.add_routes(app)          # GET / (static/display.html), WS /ws, POST /api/event, GET /api/taps
     app.router.add_static("/tts/", TTS_DIR)
@@ -512,7 +545,8 @@ async def main():
     else:
         log.info("alexa link disabled (ALEXA_LINK!=1)")
 
-    app["warm_task"] = asyncio.create_task(_warm())   # BOX-3 may connect during this; Session.finish waits
+    if warm_at_start:
+        app["warm_task"] = asyncio.create_task(_warm())   # BOX-3 may connect during this; Session.finish waits
 
     # Simple explicit reconnect loop (ReconnectLogic without zeroconf backed off for minutes after a reboot)
     while True:
@@ -521,10 +555,11 @@ async def main():
         async def on_stop(expected_disconnect: bool):
             lost.set()
         try:
-            await client.connect(on_stop=on_stop, login=True)
-            s_ = Session(client)
-            await REC.attach(client)
-            client.subscribe_voice_assistant(handle_start=s_.on_start, handle_stop=s_.on_stop, handle_audio=s_.on_audio)
+            with memlog.event("box3.connect"):
+                await client.connect(on_stop=on_stop, login=True)
+                s_ = Session(client)
+                await REC.attach(client)
+                client.subscribe_voice_assistant(handle_start=s_.on_start, handle_stop=s_.on_stop, handle_audio=s_.on_audio)
             log.info("connected to BOX-3, voice assistant subscribed")
             try:   # mirror device logs (wake detections, warnings) into hub.log
                 from aioesphomeapi import LogLevel
