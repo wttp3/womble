@@ -1,11 +1,11 @@
 """petit voice hub, slice 1.
 BOX-3 (ESPHome voice_assistant over native API) -> STT (xAI, fallback mlx-whisper) -> rule router
 -> local JSON list, or the brain when the router falls through
--> TTS (Kokoro/mlx-audio, fallback macOS `say`) -> BOX-3 media player
+-> TTS (Kokoro/mlx-audio or ElevenLabs, fallback macOS `say`) -> BOX-3 media player
 + WebSocket card to display page.  Secrets come from the environment only.
 
 Env: BOX3_HOST (required, BOX-3 address), BOX3_NOISE_PSK (api encryption key), HUB_HOST_IP (petit LAN IP
-the BOX-3 can reach), HUB_PORT (8080), WHISPER_MODEL, TTS_ENGINE (kokoro|say).
+the BOX-3 can reach), HUB_PORT (8080), WHISPER_MODEL, TTS_ENGINE (kokoro|elevenlabs|say; see tts_eleven.py).
 Memory: Kokoro and whisper run in ml_worker.py child processes that start on demand and exit when idle
 (TTS_IDLE_UNLOAD_S, STT_IDLE_UNLOAD_S, ML_WORKER, ML_WARM_AT_START, ML_PREWARM_ON_WAKE, MEM_LOG; see ml_client.py and memlog.py).
 NOTE: the aioesphomeapi voice-assistant API names below match how Home Assistant's esphome
@@ -39,13 +39,34 @@ TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro")
 log = logging.getLogger("hub")
 
 # ---------- local models (ml_worker.py child processes; nothing ML is imported in this process) ----------
-import memlog, ml_client
+import memlog, ml_client, ml_worker, tts_eleven
 TTS_IDLE_S = float(os.environ.get("TTS_IDLE_UNLOAD_S", "300"))      # Kokoro worker exits after this long unused; 0 = stay loaded
 STT_IDLE_S = float(os.environ.get("STT_IDLE_UNLOAD_S", str(TTS_IDLE_S)))   # same for whisper when STT_ENGINE=whisper
 ML_TIMEOUT_S = float(os.environ.get("ML_TIMEOUT_S", "120"))         # one model call, cold load included
-ML_TTS = ml_client.make("tts", idle_s=TTS_IDLE_S, timeout=ML_TIMEOUT_S)
-ML_STT = ml_client.make("stt", idle_s=STT_IDLE_S, timeout=ML_TIMEOUT_S)
+_hf_offline = {"tts": True, "stt": True}   # cleared for a worker whose offline load failed
+def _hf_env(name: str) -> dict:
+    """HF_HUB_OFFLINE=1 for a worker whose model is already in the Hugging Face cache, so a spawn makes no API calls."""
+    if os.environ.get("ML_HF_OFFLINE", "1") == "0" or "HF_HUB_OFFLINE" in os.environ or not _hf_offline[name]:
+        return {}
+    cached = (ml_client.hf_cached(ml_worker.KOKORO_REPO, [f"voices/{ml_worker.KOKORO_VOICE}.*"]) if name == "tts"
+              else ml_client.hf_cached(WHISPER_MODEL))
+    return {"HF_HUB_OFFLINE": "1"} if cached else {}
+
+ML_TTS = ml_client.make("tts", idle_s=TTS_IDLE_S, timeout=ML_TIMEOUT_S, env=lambda: _hf_env("tts"))
+ML_STT = ml_client.make("stt", idle_s=STT_IDLE_S, timeout=ML_TIMEOUT_S, env=lambda: _hf_env("stt"))
 memlog.watch_pid("tts", ML_TTS.pid); memlog.watch_pid("stt", ML_STT.pid)
+
+def _ml_request(worker, op, header, payload=b""):
+    """worker.request; if a worker started with HF_HUB_OFFLINE fails, try once more with the network allowed."""
+    try:
+        return worker.request(op, header, payload)
+    except ml_client.WorkerError as e:
+        if not getattr(worker, "spawn_env", {}).get("HF_HUB_OFFLINE") or not _hf_offline[worker.name] or "timed out" in str(e):
+            raise
+        log.warning("ml %s failed offline (%s); retrying with Hugging Face access", worker.name, e)
+        _hf_offline[worker.name] = False
+        worker.stop("retry online")
+        return worker.request(op, header, payload)
 
 def _whisper_args() -> dict:
     return {"model": WHISPER_MODEL, "lang": os.environ.get("WHISPER_LANG") or None}
@@ -54,7 +75,7 @@ def prewarm_models():
     """Wake word heard: start loading what the reply will need, so the load overlaps listening and STT."""
     if os.environ.get("ML_PREWARM_ON_WAKE", "1") == "0": return
     try:
-        if TTS_ENGINE == "kokoro": ML_TTS.prewarm("tts")
+        if TTS_ENGINE == "kokoro": ML_TTS.prewarm("tts")   # elevenlabs: Kokoro only starts on a fallback
         if _whisper_primary(): ML_STT.prewarm("stt", **_whisper_args())
     except Exception as e:
         log.warning("prewarm failed (%s)", type(e).__name__)
@@ -62,7 +83,7 @@ def prewarm_models():
 # ---------- STT ----------
 def transcribe_whisper(pcm: bytes) -> str:
     with memlog.event("stt.whisper") as ev:
-        hdr, _ = ML_STT.request("stt", _whisper_args(), pcm)
+        hdr, _ = _ml_request(ML_STT, "stt", _whisper_args(), pcm)
         ev.note(**(hdr.get("mem") or {}))
     return (hdr.get("text") or "").strip()
 
@@ -99,8 +120,9 @@ def _whisper_unload():
 def warmup():
     """Load the models now. Not run at startup unless ML_WARM_AT_START=1; smoke.py and test_session.py call it."""
     if _whisper_primary():   # only keep whisper around when it is the main STT
-        ML_STT.request("warm", {"what": ["stt"], **_whisper_args()})
-    tts("Ready.")   # loads Kokoro + misaki/spaCy (first ever call ~30 s cold)
+        _ml_request(ML_STT, "warm", {"what": ["stt"], **_whisper_args()})
+    if TTS_ENGINE != "elevenlabs":   # ElevenLabs needs no warm-up, and Kokoro is only its fallback
+        tts("Ready.")   # loads Kokoro + misaki/spaCy (first ever call ~30 s cold)
 
 # ---------- router (router.py / lists.py; importable without MLX) ----------
 LISTS = ListStore(LIST_FILE)
@@ -152,11 +174,27 @@ async def route(text: str, *, source: str = "box3-kitchen", session: str | None 
 
 # ---------- TTS ----------
 def synthesize(text: str):
-    """Float32 mono audio at 48 kHz, plus the sample rate. Sets tts.last_engine."""
-    if TTS_ENGINE == "kokoro":
+    """Float32 mono audio at 48 kHz, plus the sample rate. Sets tts.last_engine.
+
+    TTS_ENGINE=elevenlabs: ElevenLabs, then Kokoro, then `say`. kokoro: Kokoro, then `say`. say: `say` only.
+    """
+    if TTS_ENGINE == "elevenlabs" and tts_eleven.available():
+        t0 = time.perf_counter()
+        try:
+            with memlog.event("tts.elevenlabs") as ev:
+                pcm = tts_eleven.synth(text)
+                ev.note(chars=len(text), bytes=len(pcm))
+            audio = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+            tts.last_engine = "elevenlabs"
+            log.info("tts engine=elevenlabs latency=%.0fms chars=%d", (time.perf_counter() - t0) * 1000, len(text))
+            return _resample(audio, tts_eleven.SAMPLE_RATE, 48000), 48000
+        except Exception as e:
+            reason = str(e) if isinstance(e, tts_eleven.ElevenError) else type(e).__name__
+            log.warning("elevenlabs tts failed (%s); falling back to kokoro", reason)
+    if TTS_ENGINE in ("kokoro", "elevenlabs"):
         try:
             with memlog.event("tts") as ev:
-                hdr, raw = ML_TTS.request("tts", {"text": text})
+                hdr, raw = _ml_request(ML_TTS, "tts", {"text": text})
                 ev.note(chars=len(text), **(hdr.get("mem") or {}))
             audio = np.frombuffer(raw, dtype=np.float32)
             tts.last_engine = "kokoro"
