@@ -14,8 +14,8 @@ Every reply also carries ms, warm (what is loaded) and mem (MLX active/peak/cach
 process's footprint, in MB).
 
 Env: MLX_CACHE_MB (128) caps MLX's Metal buffer cache; MLX_MEMORY_LIMIT_MB (unset) passes a
-limit to mx.set_memory_limit; TTS_CHUNK_CHARS (300) splits long replies at sentence ends so one
-Kokoro run stays short. ML_WORKER_FAKE=1 swaps the models for small numpy stand-ins (tests only).
+limit to mx.set_memory_limit; TTS_CHUNK_CHARS (200) splits long replies at sentence ends so one
+Kokoro run stays short (the MLX cache is cleared between pieces). ML_WORKER_FAKE=1 swaps the models for small numpy stand-ins (tests only).
 """
 import gc, json, logging, os, re, struct, sys, time
 
@@ -64,17 +64,25 @@ def write_frame(f, header, payload=b""):
 
 
 # ---------- text ----------
-_SENT_END = re.compile(r"(?<=[.!?])\s+")
+_SPLITS = (re.compile(r"(?<=[.!?])\s+"), re.compile(r"(?<=[,;:])\s+"), re.compile(r"\s+"))
 
 
-def split_text(text, limit):
-    """Pack whole sentences into pieces of at most `limit` characters. Short text is returned as is."""
+def split_text(text, limit, _level=0):
+    """Pack whole sentences into pieces of at most `limit` characters. Short text is returned as is.
+
+    A sentence longer than the limit is split at commas, then between words, so no piece exceeds it
+    (a single word longer than the limit is the only exception).
+    """
     text = (text or "").strip()
-    if limit <= 0 or len(text) <= limit:
+    if limit <= 0 or len(text) <= limit or _level >= len(_SPLITS):
         return [text]
     parts, cur = [], ""
-    for s in _SENT_END.split(text):
-        if cur and len(cur) + 1 + len(s) > limit:
+    for s in _SPLITS[_level].split(text):
+        if len(s) > limit:
+            if cur:
+                parts.append(cur); cur = ""
+            parts.extend(split_text(s, limit, _level + 1))
+        elif cur and len(cur) + 1 + len(s) > limit:
             parts.append(cur)
             cur = s
         else:
@@ -90,7 +98,8 @@ class Engine:
 
     def __init__(self):
         self.fake = os.environ.get("ML_WORKER_FAKE", "0") == "1"
-        self.chunk_chars = int(os.environ.get("TTS_CHUNK_CHARS", "300"))
+        self.chunk_chars = int(os.environ.get("TTS_CHUNK_CHARS", "200"))
+        self.tts_stats = {}      # last tts(): pieces and the highest MLX peak of any one piece
         self.kokoro = None
         self.whisper = None      # model name once loaded
         self._mx = None
@@ -166,16 +175,28 @@ class Engine:
         """Float32 mono samples at KOKORO_SR."""
         import numpy as np
         model = self._load_kokoro()
-        chunks = []
-        for part in split_text(text, self.chunk_chars):
+        chunks, peaks = [], []
+        parts = split_text(text, self.chunk_chars)
+        for part in parts:
             if self.fake:
                 n = int(KOKORO_SR * max(0.2, 0.06 * len(part)))
                 chunks.append((0.2 * np.sin(np.arange(n) * 2 * np.pi * 220 / KOKORO_SR)).astype(np.float32))
                 continue
+            self._mxcall("reset_peak_memory")
             for r in model.generate(text=part, voice=KOKORO_VOICE, speed=1.0):
-                chunks.append(np.array(r.audio, dtype=np.float32).reshape(-1))
+                chunks.append(np.array(r.audio, dtype=np.float32).reshape(-1))   # numpy copy; the MLX array is dropped
                 del r
+                self.release()
+            # Memory for one run grows with the length of its audio. Free everything before the next piece
+            # so a long reply peaks at one piece's size, not the sum.
+            if len(parts) > 1:
+                gc.collect()
             self.release()
+            peaks.append(self._mxcall("get_peak_memory") or 0)
+        self.tts_stats = {"tts_pieces": len(parts), "tts_max_piece_chars": max(len(p) for p in parts)}
+        if any(peaks):
+            self.tts_stats["mlx_peak"] = round(max(peaks) / MB)       # highest single piece
+            self.tts_stats["mlx_piece_peaks"] = [round(p / MB) for p in peaks][:12]
         return np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
 
     # ---- STT ----
@@ -238,11 +259,16 @@ class Engine:
             self.unload()
         elif op == "crash" and self.fake:
             os._exit(3)
+        elif op == "hasenv" and self.fake:
+            out["has"] = hdr.get("name") in os.environ
         elif op == "sleep" and self.fake:
             time.sleep(float(hdr.get("s") or 0))
         elif op != "ping":
             raise ValueError(f"unknown op {op!r}")
-        out.update(ok=True, ms=round((time.perf_counter() - t0) * 1000), warm=self.loaded(), mem=self.mem())
+        mem = self.mem()
+        if op == "tts":
+            mem.update(self.tts_stats)
+        out.update(ok=True, ms=round((time.perf_counter() - t0) * 1000), warm=self.loaded(), mem=mem)
         return out, data
 
 

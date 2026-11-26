@@ -12,7 +12,7 @@ import argparse, os, sys, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import memlog, ml_client
+import memlog, ml_client, ml_worker
 
 SHORT = "It's twenty past four."
 LONG = " ".join(["Here is a longer answer with several sentences, the kind a recipe step or a research summary produces."] * 8)
@@ -39,7 +39,12 @@ def main():
     ap.add_argument("--idle", type=float, default=5.0, help="idle seconds before the worker exits")
     a = ap.parse_args()
     print(f"this process (stands in for the hub): {mbs(memlog.footprint())}")
-    w = ml_client.make("tts", idle_s=a.idle)
+    def offline(repo, needs=()):     # same rule as hub._hf_env: no Hugging Face calls when the model is cached
+        on = "HF_HUB_OFFLINE" not in os.environ and os.environ.get("ML_HF_OFFLINE", "1") != "0" and ml_client.hf_cached(repo, needs)
+        return {"HF_HUB_OFFLINE": "1"} if on else {}
+    tts_env = offline(ml_worker.KOKORO_REPO, [f"voices/{ml_worker.KOKORO_VOICE}.*"])
+    print(f"kokoro worker HF offline: {bool(tts_env)} | TTS_CHUNK_CHARS={os.environ.get('TTS_CHUNK_CHARS', '200')}")
+    w = ml_client.make("tts", idle_s=a.idle, env=tts_env)
     for i in range(a.cycles):
         t0 = time.perf_counter(); w.request("warm", {"what": ["tts"]}); cold = time.perf_counter() - t0
         pid = w.pid(); loaded = memlog.footprint(pid)
@@ -55,8 +60,8 @@ def main():
         print(f"         worker {'exited' if gone(pid) else 'STILL RUNNING'} after idle; "
               f"this process {mbs(memlog.footprint())}")
     if a.stt:
-        s = ml_client.make("stt", idle_s=0)
         model = os.environ.get("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
+        s = ml_client.make("stt", idle_s=0, env=offline(model))
         t0 = time.perf_counter(); hdr, _ = s.request("warm", {"what": ["stt"], "model": model, "lang": "en"})
         pid = s.pid()
         print(f"whisper: cold load + 2 runs {time.perf_counter() - t0:.1f} s | worker {mbs(memlog.footprint(pid))}, "

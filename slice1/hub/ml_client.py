@@ -19,12 +19,31 @@ from ml_worker import Engine, read_frame, write_frame
 log = logging.getLogger("hub.ml")
 WORKER = Path(__file__).with_name("ml_worker.py")
 # The worker only needs model settings. Don't hand it the hub's credentials.
-_KEEP_FROM_WORKER = ("BOX3_NOISE_PSK", "HUB_LINK_TOKEN", "DISPLAY_TOKEN", "XAI_BRAIN_API_KEY")
+_KEEP_FROM_WORKER = ("BOX3_NOISE_PSK", "HUB_LINK_TOKEN", "DISPLAY_TOKEN", "XAI_BRAIN_API_KEY", "ELEVENLABS_API_KEY")
 _all = []
 
 
 class WorkerError(RuntimeError):
     pass
+
+
+def hf_cache_dir() -> Path:
+    for var in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if os.environ.get(var):
+            return Path(os.environ[var])
+    home = os.environ.get("HF_HOME")
+    return (Path(home) if home else Path.home() / ".cache" / "huggingface") / "hub"
+
+
+def hf_cached(repo: str, needs=()) -> bool:
+    """True if a snapshot of `repo` is in the local Hugging Face cache and holds a match for each glob in `needs`."""
+    if not repo or repo.count("/") != 1 or repo.startswith(("/", ".", "~")):
+        return False
+    try:
+        snaps = [d for d in (hf_cache_dir() / ("models--" + repo.replace("/", "--")) / "snapshots").iterdir() if d.is_dir()]
+        return any(any(d.iterdir()) and all(any(d.glob(g)) for g in needs) for d in snaps)
+    except OSError:
+        return False
 
 
 class _Base:
@@ -118,7 +137,8 @@ class MLWorker(_Base):
 
     def __init__(self, name, idle_s=300.0, timeout=120.0, env=None):
         super().__init__(name, idle_s, timeout)
-        self.env = dict(env or {})
+        self.env = env or {}          # dict, or a callable returning one (evaluated at each spawn)
+        self.spawn_env = {}           # what the running worker was started with
         self._proc = None
         self._born = 0.0
 
@@ -131,7 +151,8 @@ class MLWorker(_Base):
 
     def _spawn(self):
         env = {k: v for k, v in os.environ.items() if k not in _KEEP_FROM_WORKER}
-        env.update(self.env)
+        self.spawn_env = dict(self.env() if callable(self.env) else self.env)
+        env.update(self.spawn_env)
         env.setdefault("PYTHONUNBUFFERED", "1")
         self._proc = subprocess.Popen([sys.executable, str(WORKER), self.name],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)

@@ -61,6 +61,11 @@ def test_framing_and_split():
     check(len(parts) > 5 and all(len(p) <= 120 for p in parts), "pieces within the limit")
     check(" ".join(parts) == long, "nothing lost when split")
     check(split_text(long, 0) == [long], "0 disables splitting")
+    run_on = "One very long sentence, " + ", ".join(f"with clause number {i}" for i in range(30)) + " and no full stop until the end."
+    parts = split_text(run_on, 100)
+    check(len(parts) > 3 and all(len(p) <= 100 for p in parts) and " ".join(parts) == run_on, "an overlong sentence is split at commas")
+    words = " ".join(["word"] * 100)
+    check(all(len(p) <= 50 for p in split_text(words, 50)), "no commas: split between words")
 
 
 def test_cycles():
@@ -157,23 +162,43 @@ def test_memlog():
     memlog.ENABLED = True
     lines = []
     old = memlog.log.info; memlog.log.info = lambda m, *a: lines.append(m % a if a else m)
+    old_sample = memlog.SAMPLE_S
+    spike = (memlog.lifetime_peak() or 0) // MB + 64       # big enough to be this process's new record
     try:
         w = ml_client.make("tts", idle_s=0)
         memlog.watch_pid("tts", w.pid)
+        # 1. A spike held across several samples. The pages are written (an untouched bytearray is not
+        #    charged to the process on macOS, which is why the old version of this test saw nothing).
+        memlog.SAMPLE_S = 0.05
         with memlog.event("tts") as ev:
-            hold = bytearray(30 * MB)          # a spike that is gone again before the event ends
-            time.sleep(0.3); del hold
+            hold = bytes([1]) * (spike * MB)
+            time.sleep(0.4); del hold
             w.request("tts", {"text": "Measured."}); ev.note(chars=9)
+        # 2. A spike far shorter than the sample interval: only the OS lifetime-peak counter can see it.
+        memlog.SAMPLE_S = 30
+        with memlog.event("burst"):
+            time.sleep(0.05)                               # let the sampler take its one sample first
+            hold = bytes([1]) * ((spike + 96) * MB); del hold
         w.stop()
         memlog.gauge("answers", lambda: 3)
         lines.append(memlog.snapshot_line())
     finally:
+        memlog.SAMPLE_S = old_sample
         memlog.log.info = old; memlog.ENABLED = False; memlog._pids.clear(); memlog._gauges.clear()
-    ev_line = lines[0]
+    def fields(line):       # first occurrence wins: the hub's peak= comes before each worker's
+        out = {}
+        for kv in line.split()[1:]:
+            k, v = kv.split("=", 1); out.setdefault(k, v)
+        return out
+    ev_line, burst_line = lines[0], lines[1]
     check(ev_line.startswith("mem ev=tts ") and "tts_mb=" in ev_line and "chars=9" in ev_line, ev_line)
-    f = dict(kv.split("=", 1) for kv in ev_line.split()[1:])
-    before, after = (float(x) for x in f["hub_mb"].split("->"))
-    check(float(f["peak"]) >= before + 20, f"peak caught the spike: {ev_line}")
+    f = fields(ev_line); before = float(f["hub_mb"].split("->")[0])
+    # Half the spike is enough: the point is that a held spike shows up, not the exact figure.
+    check(float(f["peak"]) >= before + spike / 2, f"sampled peak caught a held spike: {ev_line}")
+    b = fields(burst_line); before = float(b["hub_mb"].split("->")[0])
+    if memlog.lifetime_peak() is not None:
+        check(float(b["peak"]) >= before + (spike + 96) / 2, f"lifetime peak caught a short spike: {burst_line}")
+    lines[1:2] = []
     check("mem idle hub_mb=" in lines[1] and "answers=3" in lines[1], lines[1])
     print(" ", ev_line); print(" ", lines[1])
 
@@ -239,6 +264,41 @@ def test_hub_wiring():
     check(hub._prune_tts() == 1 and not old.exists() and beep.exists() and wav.exists(), "tts prune")
 
 
+def test_hf_offline():
+    """A worker whose model is already cached is started with HF_HUB_OFFLINE=1; a failed offline load is retried online."""
+    import hub
+    tmp = Path(tempfile.mkdtemp()); old = os.environ.get("HF_HUB_CACHE"); os.environ["HF_HUB_CACHE"] = str(tmp)
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    try:
+        check(hub._hf_env("tts") == {} and hub._hf_env("stt") == {}, "no cache: network allowed")
+        snap = tmp / "models--prince-canuma--Kokoro-82M" / "snapshots" / "abc"
+        (snap / "voices").mkdir(parents=True); (snap / "config.json").write_text("{}")
+        check(hub._hf_env("tts") == {}, "snapshot without the voice file: network allowed")
+        (snap / "voices" / "af_heart.safetensors").write_bytes(b"x")
+        check(hub._hf_env("tts") == {"HF_HUB_OFFLINE": "1"}, "cached model: offline")
+        check(not ml_client.hf_cached("/some/local/path") and not ml_client.hf_cached("not-a-repo"), "paths are not repos")
+        hub.ML_TTS.stop(); hub.ML_TTS.request("ping")
+        check(hub.ML_TTS.spawn_env == {"HF_HUB_OFFLINE": "1"}, "worker started offline")
+        real = hub.ML_TTS.request; calls = []
+        def flaky(op, header=None, payload=b""):
+            calls.append(dict(hub.ML_TTS.spawn_env))
+            if len(calls) == 1: raise ml_client.WorkerError("LocalEntryNotFoundError: offline")
+            return real(op, header, payload)
+        hub.ML_TTS.request = flaky
+        try:
+            hdr, _ = hub._ml_request(hub.ML_TTS, "tts", {"text": "Second try."})
+        finally:
+            hub.ML_TTS.request = real
+        check(hdr["ok"] and len(calls) == 2 and hub.ML_TTS.spawn_env == {}, "offline failure retried with the network allowed")
+        check(hub._hf_env("tts") == {}, "and that worker stays online afterwards")
+        os.environ["ML_HF_OFFLINE"] = "0"; hub._hf_offline["tts"] = True
+        check(hub._hf_env("tts") == {}, "ML_HF_OFFLINE=0 disables it")
+    finally:
+        os.environ.pop("ML_HF_OFFLINE", None); hub._hf_offline["tts"] = True; hub.ML_TTS.stop()
+        if old is None: os.environ.pop("HF_HUB_CACHE", None)
+        else: os.environ["HF_HUB_CACHE"] = old
+
+
 def test_bounded_containers():
     from display import Display, TAPS_KEEP
     from brain.core import Memory
@@ -259,7 +319,7 @@ def test_bounded_containers():
 
 if __name__ == "__main__":
     for t in (test_framing_and_split, test_cycles, test_prewarm_and_touch, test_failures, test_inprocess,
-              test_memlog, test_hub_wiring, test_bounded_containers):
+              test_memlog, test_hub_wiring, test_hf_offline, test_bounded_containers):
         print(t.__name__); t()
     ml_client.stop_all()
     print("test_ml_worker OK")

@@ -8,7 +8,8 @@
 
 On macOS the number is phys_footprint (what `footprint <pid>` and Activity Monitor show), read with
 proc_pid_rusage. Elsewhere it is VmRSS from /proc. Peaks during an event come from a sampler thread
-(MEM_LOG_SAMPLE_S, default 0.2 s) that only runs while an event is open.
+(MEM_LOG_SAMPLE_S, default 0.2 s) that only runs while an event is open, plus the OS's own lifetime-peak
+counter, which catches a spike that falls between two samples whenever it sets a new record.
 
 With MEM_LOG unset every call here is a no-op.
 """
@@ -109,8 +110,10 @@ class _Event:
         self.t0 = time.perf_counter()
         self.before = footprint()
         self.peak = self.before or 0
-        self.others = {}     # worker name -> [first, last, peak]
+        self.life0 = lifetime_peak()
+        self.others = {}     # worker name -> [first, last, peak, lifetime peak when first seen]
         self.notes = {}
+        self.pids0 = set(_live_pids().values())
         self.sample()
 
     def note(self, **kw):
@@ -120,21 +123,32 @@ class _Event:
         f = footprint()
         if f and f > self.peak:
             self.peak = f
+        # The OS keeps each process's highest footprint ever. If that record rose while the event was
+        # open, the new record happened inside it, however short the spike was between two samples.
+        life = lifetime_peak()
+        if life and self.life0 is not None and life > self.life0 and life > self.peak:
+            self.peak = life
         for name, pid in _live_pids().items():
             v = footprint(pid)
             if v is None:
                 continue
-            rec = self.others.setdefault(name, [v, v, v])
+            rec = self.others.get(name)
+            if rec is None:
+                # A worker first seen mid-event was started for it, so its whole lifetime peak counts.
+                rec = self.others[name] = [v, v, v, None if self.fresh_worker(pid) else lifetime_peak(pid)]
             rec[1] = v
-            if v > rec[2]:
-                rec[2] = v
+            life = lifetime_peak(pid)
+            rec[2] = max(rec[2], v, life if life and (rec[3] is None or life > rec[3]) else 0)
+
+    def fresh_worker(self, pid):
+        return pid not in self.pids0
 
     def line(self):
         after = footprint()
         parts = ["mem ev=%s ms=%d hub_mb=%s->%s peak=%s" % (
             self.name, (time.perf_counter() - self.t0) * 1000, mb(self.before), mb(after),
             mb(max(self.peak, after or 0)))]
-        for name, (first, last, peak) in sorted(self.others.items()):
+        for name, (first, last, peak, _) in sorted(self.others.items()):
             parts.append("%s_mb=%s->%s peak=%s" % (name, mb(first), mb(last), mb(peak)))
         parts += ["%s=%s" % kv for kv in self.notes.items()]
         return " ".join(parts)
